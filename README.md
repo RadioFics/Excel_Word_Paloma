@@ -1,56 +1,134 @@
 # Generador de Estado de Situación Financiera (piloto)
 
 Traslada el Estado de Situación Financiera de un libro de Excel a una
-plantilla de Word. Cambia el Excel, corres el programa, obtienes un Word
+plantilla de Word. Cambias el Excel, corres el programa, obtienes un Word
 actualizado. La plantilla nunca se toca; el Excel nunca se modifica.
 
-Desde la versión de detección por contenido, el programa **ya no depende de
-nombres ni posiciones fijas**: identifica la hoja y las columnas por lo que
-contienen, y la columna `Tipo` pasó a ser **opcional** (si falta, infiere el
-tipo de cada fila y deja un CSV de revisión).
+Identifica la hoja y las columnas por su **contenido**, no por nombres ni
+posiciones fijas. La columna `Tipo` es **opcional**: si falta, infiere el
+tipo de cada fila y deja un CSV de revisión.
 
-## Estructura de la carpeta
+---
+
+# Descargar y probar (usuario final, equipo externo)
+
+Para comprobar que funciona en otro computador **sin instalar nada** y sin
+conocimientos técnicos. Solo Windows de 64 bits.
+
+## 1. Descargar
+
+Descarga **`GeneradorFS_portable_AAAAMMDD.zip`** (~21 MB) desde:
+
+- la página **Releases** del repositorio
+  (`https://github.com/RadioFics/Excel_Word_Paloma/releases`), **o**
+- el enlace de **OneDrive** que te compartan.
+
+Contiene todo lo necesario, incluida una copia de Python. No hay instalador.
+
+Si el navegador dice *"…no se descarga habitualmente"*, elige
+**Conservar / Mantener**.
+
+## 2. Comprobar que es el archivo correcto (recomendado)
+
+Abre PowerShell en la carpeta de descargas y ejecuta:
 
 ```
-generador_fs.py                              <- el programa
-config.json                                  <- ajustes (todo opcional)
-plantilla_estado_situacion_financiera.docx   <- la plantilla (no editar el formato)
-generar.bat                                  <- lanzador de doble clic (Windows)
-requirements.txt                             <- dependencias exactas
-tools/bootstrap_python.ps1                   <- instala Python portable en .\python\
-INSTALACION.md                               <- cómo configurar Python (sin admin)
-DIRECCION.md                                 <- dirección del proyecto y caso ante TI
-Copia_Editable_con_columna_Tipo.xlsx         <- ejemplo de Excel ya etiquetado
-salidas/                                     <- documentos generados + revisar_tipos.csv
+powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 '.\GeneradorFS_portable_20260831.zip').Hash"
 ```
 
-## Puesta en marcha (una vez por equipo)
-
-No requiere permisos de administrador. Ver `INSTALACION.md`. En resumen:
+El resultado debe coincidir, carácter por carácter, con el hash que publique
+quien te compartió el archivo. Hash de la compilación del 2026-08-31:
 
 ```
-powershell -ExecutionPolicy Bypass -File .\tools\bootstrap_python.ps1
+4E48FD857919292C619994812B806FE1CEE172B38F7B5EB6D9467B8DA7E66074
 ```
 
-Deja un Python portable en `.\python\`. `generar.bat` lo usa solo.
+Si coincide, es exactamente ese archivo, sin modificar. (Cada vez que se
+reconstruye el `.zip` el hash cambia; usa siempre el que acompañe a la
+descarga.)
 
-## Para el usuario que solo necesita generar el documento
+## 3. Desbloquear y extraer
 
-1. Arrastra el archivo Excel sobre `generar.bat`, o haz doble clic en
-   `generar.bat` sin arrastrar nada (buscará el Excel más reciente de esta
-   carpeta cuyo nombre contenga "FS").
-2. Se abre una ventana, muestra el resultado y espera a que presiones Enter.
-3. El documento nuevo queda en `salidas`, con la fecha y hora en el nombre.
+1. Clic derecho en el `.zip` → **Propiedades**.
+2. Si abajo aparece *"Este archivo proviene de otro equipo…"*, marca
+   **Desbloquear** → **Aceptar**. (Esto evita los avisos en todos los
+   archivos de dentro.)
+3. Clic derecho en el `.zip` → **Extraer todo…** → elige una carpeta normal
+   (Escritorio, Documentos). **No** dentro de `C:\Archivos de programa`.
+4. **No ejecutes nada desde dentro del `.zip`**; primero extrae.
+
+## 4. Ejecutar
+
+- **Comprobación automática:** entra en la carpeta `tools`, clic derecho en
+  `verificar.ps1` → **Ejecutar con PowerShell**. Debe terminar en verde:
+  `TODO CORRECTO. La aplicacion funciona en este equipo.`
+  - Si dice *"la ejecución de scripts está deshabilitada"*, ábrelo así (una
+    sola vez, no cambia la configuración del equipo):
+    ```
+    powershell -ExecutionPolicy Bypass -File .\tools\verificar.ps1
+    ```
+- **Prueba real:** arrastra tu Excel sobre `generar.bat`, o haz doble clic
+  en `generar.bat` sin arrastrar nada (usa el `Copia_Editable_con_columna_Tipo.xlsx`
+  incluido).
+- Si aparece la pantalla azul **"Windows protegió su PC"**:
+  **Más información** → **Ejecutar de todas formas**.
+
+## 5. Resultado esperado
+
+En la carpeta `salidas` aparecen:
+
+- `estado_situacion_financiera_*.docx` — el documento generado.
+- `revisar_tipos.csv` — qué se trasladó, con qué tipo y por qué.
+
+Con el Excel de ejemplo: **33 líneas**, hoja `FS`, columnas
+`etiqueta=A nota=C actual=E previo=F tipo=G`, región filas 5–47.
+
+---
+
+## ¿Por qué Windows me advierte? ¿Es un virus?
+
+No. Los avisos aparecen porque el paquete **no está firmado digitalmente**
+(firmar código requiere un certificado de pago; es un paso posterior).
+Hasta entonces, Windows advierte de **cualquier** archivo descargado que no
+reconoce, sin mirar su contenido.
+
+Qué hay dentro del `.zip`:
+
+- Una copia de **Python** (el lenguaje, tal como se baja de python.org).
+- La **plantilla de Word** y un **Excel de ejemplo**.
+- `generador_fs.py`: **texto plano** que puedes abrir con el Bloc de notas y
+  leer entero.
+
+Lo que **no** hace: no hay instalador, no toca el registro de Windows, no se
+arranca solo con el sistema, no se conecta a internet, no envía datos a
+ningún lado. Lee un `.xlsx` de tu equipo y escribe un `.docx` en tu equipo.
+
+Cómo asegurarte de que es el archivo legítimo: verifica el **SHA-256**
+(paso 2). Origen: repositorio `RadioFics/Excel_Word_Paloma`.
+
+**Si tu equipo lo bloquea por completo** (política corporativa, AppLocker,
+antivirus que lo pone en cuarentena y no da opción de continuar): **no
+insistas ni lo fuerces**. Anótalo y repórtalo — ese es precisamente uno de
+los datos que esta prueba busca confirmar.
+
+---
+
+## Cómo usarlo en el día a día
+
+1. Arrastra el Excel sobre `generar.bat`, o doble clic sin arrastrar nada
+   (toma el Excel más reciente de la carpeta cuyo nombre contenga "FS").
+2. Se abre una ventana, muestra el resultado y espera a que pulses Enter.
+3. El documento nuevo queda en `salidas`, con fecha y hora en el nombre.
    Los anteriores no se borran ni se sobrescriben.
-4. **Revisa `salidas\revisar_tipos.csv`**: lista fila por fila qué se
-   trasladó, con qué tipo, y si ese tipo fue *declarado* (venía en la hoja)
-   o *inferido* (lo dedujo el programa). Si algo no cuadra, corrígelo en el
-   Excel y vuelve a generar.
+4. **Revisa `salidas\revisar_tipos.csv`**: fila por fila, qué se trasladó,
+   con qué tipo, y si fue *declarado* (venía en la hoja) o *inferido* (lo
+   dedujo el programa). Si algo no cuadra, corrígelo en el Excel y repite.
 
-Para ver solo esa revisión sin generar el Word:
+Para ver solo esa revisión sin generar el Word, en una terminal en la
+carpeta:
 
 ```
-generar.bat  y luego, en una terminal:  python\python.exe generador_fs.py "tu.xlsx" --revisar
+python\python.exe generador_fs.py "tu.xlsx" --revisar
 ```
 
 ## La columna "Tipo" (opcional)
@@ -95,6 +173,52 @@ al reguardar, descarta el valor cacheado de **todas** las fórmulas. El
 síntoma es que el programa corre sin error pero el Word sale con las cifras
 en blanco.
 
+---
+
+# Para desarrollo o equipo propio (con permisos)
+
+## Estructura de la carpeta
+
+```
+generador_fs.py                              <- el programa
+config.json                                  <- ajustes (todo opcional)
+plantilla_estado_situacion_financiera.docx   <- la plantilla (no editar el formato)
+generar.bat                                  <- lanzador de doble clic (Windows)
+requirements.txt                             <- dependencias exactas
+tools/bootstrap_python.ps1                   <- monta Python portable en .\python\
+tools/verificar.ps1                          <- prueba de humo del entorno
+tools/hacer_paquete.ps1                      <- crea el .zip portable (usuario final)
+INSTALACION.md                               <- Python sin permisos de admin
+PRUEBA_EXTERNA.md                            <- guía de la prueba en otro equipo
+DIRECCION.md                                 <- dirección del proyecto y caso ante TI
+addin/                                       <- add-in de Word (v0, actualiza in situ)
+Copia_Editable_con_columna_Tipo.xlsx         <- ejemplo de Excel ya etiquetado
+salidas/                                     <- documentos generados + revisar_tipos.csv
+```
+
+## Montar el entorno (una vez, necesita internet)
+
+Sin permisos de administrador. Ver `INSTALACION.md`. En resumen:
+
+```
+powershell -ExecutionPolicy Bypass -File .\tools\bootstrap_python.ps1
+```
+
+Deja un Python portable en `.\python\`. `generar.bat` lo usa solo.
+
+## Producir el `.zip` para el usuario final
+
+```
+powershell -ExecutionPolicy Bypass -File .\tools\hacer_paquete.ps1
+```
+
+Crea `dist\GeneradorFS_portable_AAAAMMDD.zip` (incluye `.\python\`). Publícalo
+como *release* del repositorio o en OneDrive, **junto con su hash SHA-256**:
+
+```
+powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 '.\dist\GeneradorFS_portable_AAAAMMDD.zip').Hash"
+```
+
 ## Límites y alcance de esta versión
 
 - Cubre un solo tipo de estado (Situación Financiera). Otro estado (Estado
@@ -103,7 +227,7 @@ en blanco.
 - No traslada valores sueltos dentro de párrafos narrativos (solo tablas).
 - La inferencia de tipos es heurística: revisa `revisar_tipos.csv`.
 - Genera un documento **nuevo** cada vez. Para actualizar *el mismo*
-  documento en su sitio, ver el frente C (add-in) en `DIRECCION.md`.
+  documento en su sitio, ver el add-in (`addin/`) y el frente C de `DIRECCION.md`.
 - No hay pruebas automatizadas todavía.
 - Solo Windows x64 para el Python portable. Ver límites de gobernanza (TI)
   en `INSTALACION.md` y `DIRECCION.md`.
