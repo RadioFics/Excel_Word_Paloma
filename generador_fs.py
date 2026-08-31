@@ -63,9 +63,21 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 from docxtpl import DocxTemplate
 from jinja2.sandbox import SandboxedEnvironment
 
-BASE = Path(__file__).resolve().parent
+# Rutas — funcionan tanto como script suelto como empaquetado en un .exe
+# (PyInstaller --onefile). Cuando es .exe:
+#   BASE     = carpeta donde está el .exe (ahí busca el Excel y escribe salidas/)
+#   RECURSOS = carpeta temporal con los archivos embebidos (plantilla, config)
+if getattr(sys, "frozen", False):
+    BASE = Path(sys.executable).resolve().parent
+    RECURSOS = Path(getattr(sys, "_MEIPASS", BASE))
+else:
+    BASE = Path(__file__).resolve().parent
+    RECURSOS = BASE
+
 SALIDAS = BASE / "salidas"
-CONFIG_PATH = BASE / "config.json"
+CONFIG_PATH = BASE / "config.json"            # config externa opcional (junto al .exe)
+CONFIG_EMBEBIDA = RECURSOS / "config.json"    # config por defecto embebida
+PLANTILLA_EMBEBIDA = RECURSOS / "plantilla_estado_situacion_financiera.docx"
 
 TIPOS_VALIDOS = {"H", "I", "S", "T", "N"}
 
@@ -153,20 +165,27 @@ def _primer_texto(valores, col, filas):
     return ""
 
 
+def _fusionar_config(cfg, ruta):
+    if not ruta.exists():
+        return
+    try:
+        usuario = json.loads(ruta.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{ruta.name} tiene un error de sintaxis:\n  {e}")
+    for k, v in usuario.items():
+        if k.startswith("_"):
+            continue
+        if k == "columnas" and isinstance(v, dict):
+            cfg["columnas"].update(v)
+        else:
+            cfg[k] = v
+
+
 def cargar_config():
     cfg = json.loads(json.dumps(DEFAULTS))  # copia profunda
-    if CONFIG_PATH.exists():
-        try:
-            usuario = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"config.json tiene un error de sintaxis:\n  {e}")
-        for k, v in usuario.items():
-            if k.startswith("_"):
-                continue
-            if k == "columnas" and isinstance(v, dict):
-                cfg["columnas"].update(v)
-            else:
-                cfg[k] = v
+    _fusionar_config(cfg, CONFIG_EMBEBIDA)          # 1) config embebida en el .exe
+    if CONFIG_PATH != CONFIG_EMBEBIDA:
+        _fusionar_config(cfg, CONFIG_PATH)          # 2) config externa junto al .exe (gana)
     return cfg
 
 
@@ -550,9 +569,13 @@ def encontrar_excel_por_convencion(cfg):
         reverse=True,
     )
     if not candidatos:
+        icono = "GeneradorFS.exe" if getattr(sys, "frozen", False) else "generar.bat"
         raise ValueError(
-            f"No se encontró ningún .xlsx en esta carpeta cuyo nombre contenga "
-            f"'{clave}'.\nColoque el Excel aquí, o arrástrelo sobre generar.bat."
+            "No encontré ningún Excel en esta carpeta.\n\n"
+            f"Haga una de estas dos cosas:\n"
+            f"  1) Arrastre su archivo de Excel encima de {icono}, o\n"
+            f"  2) Copie el Excel a esta misma carpeta (su nombre debe contener "
+            f"'{clave}') y vuelva a ejecutar."
         )
     return candidatos[0]
 
@@ -572,7 +595,12 @@ def ejecutar(argv):
         xlsx = encontrar_excel_por_convencion(cfg)
         print(f"(Sin archivo indicado: usando '{xlsx.name}' por convención de nombre)")
 
-    plantilla = Path(args[1]).resolve() if len(args) >= 2 else (BASE / cfg["plantilla"])
+    if len(args) >= 2:
+        plantilla = Path(args[1]).resolve()
+    else:
+        plantilla = BASE / cfg["plantilla"]
+        if not plantilla.exists():
+            plantilla = PLANTILLA_EMBEBIDA          # la que viaja dentro del .exe
 
     if not xlsx.exists():
         raise ValueError(f"No se encontró el libro de Excel:\n  {xlsx}")

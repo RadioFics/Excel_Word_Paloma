@@ -8,8 +8,10 @@
 /.venv/
 /venv/
 
-# Paquete distribuible generado
+# Paquete distribuible generado (el .exe / .zip se publican como release)
 /dist/
+/build/
+*.spec
 
 # Artefactos de Python
 __pycache__/
