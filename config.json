@@ -1,0 +1,31 @@
+{
+  "_comentario": "Todo es opcional. Borre una clave para usar su valor por defecto. 'primera_fila': un numero fija la fila de inicio; 'auto' la detecta. 'columnas': letras (A, C, E, F, G) para forzar una columna; null para detectarla por contenido.",
+
+  "empresa": "Collective Mining Ltd.",
+
+  "hoja": "FS",
+  "hoja_marcadores": [
+    "situación financiera",
+    "statement of financial position",
+    "financial position",
+    "total assets",
+    "total liabilities and equity",
+    "assets",
+    "liabilities and equity"
+  ],
+
+  "plantilla": "plantilla_estado_situacion_financiera.docx",
+  "buscar_por_convencion": "FS",
+
+  "primera_fila": "auto",
+
+  "columnas": {
+    "etiqueta": null,
+    "nota": null,
+    "actual": null,
+    "previo": null,
+    "tipo": null
+  },
+
+  "marcadores_excluir": ["control check", "check", "cuadre", "balance check"]
+}

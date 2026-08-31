@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Actualizar tablas del Estado Financiero</title>
+    <link rel="stylesheet" href="taskpane.css" />
+  </head>
+  <body>
+    <main id="app">
+      <h1>Estado de Situación Financiera</h1>
+      <p class="sub">Trae las cifras del Excel modelo a las tablas de <strong>este</strong> documento. No genera un archivo nuevo.</p>
+
+      <ol class="pasos">
+        <li>
+          <label for="archivo">1 · Elige el Excel modelo (de tu OneDrive)</label>
+          <input type="file" id="archivo" accept=".xlsx" />
+        </li>
+        <li>
+          <span>2 · Revisa lo que se va a trasladar</span>
+          <div id="resumen" class="resumen vacio">Aún no has elegido un Excel.</div>
+          <details id="detalle" hidden>
+            <summary>Ver líneas y cambios</summary>
+            <div id="cambios" class="cambios"></div>
+            <table id="tabla-preview"><thead><tr><th>#</th><th>Tipo</th><th>Concepto</th><th>Nota</th><th>Actual</th><th>Comp.</th><th>Origen</th></tr></thead><tbody></tbody></table>
+          </details>
+        </li>
+        <li>
+          <span>3 · Aplícalo al documento</span>
+          <button id="aplicar" disabled>Actualizar tablas de este documento</button>
+          <div id="estado" class="estado" role="status" aria-live="polite"></div>
+        </li>
+      </ol>
+
+      <p class="pie">Deja una entrada de bitácora en la sección «Registro de actualizaciones» del documento (control con etiqueta <code>fs-registro</code>, si existe).</p>
+    </main>
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  </body>
+</html>

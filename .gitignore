@@ -1,0 +1,30 @@
+# --- Python portable del proyecto ---------------------------------------
+# NO se versiona (52 MB, especifico de Windows x64). En un equipo nuevo:
+#   - con internet:  tools\bootstrap_python.ps1
+#   - sin internet:  use el .zip de tools\hacer_paquete.ps1 (lo incluye)
+/python/
+
+# Entornos virtuales sueltos (de intentos previos; generar.bat NO los usa)
+/.venv/
+/venv/
+
+# Paquete distribuible generado
+/dist/
+
+# Artefactos de Python
+__pycache__/
+*.pyc
+
+# Documentos generados y fotos de estado (la carpeta se conserva vacia)
+/salidas/*
+!/salidas/.gitkeep
+
+# Node / add-in
+/addin/node_modules/
+/addin/dist/
+/addin/.env
+
+# Temporales de Office y del sistema
+~$*
+Thumbs.db
+.DS_Store

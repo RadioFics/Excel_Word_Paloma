@@ -1,0 +1,67 @@
+:root {
+  --ink: #1c1f1a;
+  --soft: #4a4e45;
+  --rule: #dcd8cb;
+  --accent: #2f6b4f;
+  --accent-soft: #e4ede6;
+  --warn: #9a6512;
+  --crit: #9c382c;
+  --bg: #ffffff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", -apple-system, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--bg);
+}
+#app { padding: 16px; max-width: 460px; }
+h1 { font-size: 1.15rem; margin: 0 0 2px; }
+.sub { color: var(--soft); margin: 0 0 16px; }
+.pasos { list-style: none; margin: 0; padding: 0; }
+.pasos > li { margin-bottom: 18px; }
+.pasos label, .pasos > li > span { display: block; font-weight: 600; margin-bottom: 6px; }
+input[type="file"] { width: 100%; }
+button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { background: #b7c3bb; cursor: not-allowed; }
+.resumen {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px;
+  background: #f7f6f2;
+}
+.resumen.vacio { color: var(--soft); }
+.resumen.ok { border-color: var(--accent); background: var(--accent-soft); }
+.resumen.err { border-color: var(--crit); background: #f3ded9; color: var(--crit); }
+.resumen b { font-variant-numeric: tabular-nums; }
+details { margin-top: 8px; }
+summary { cursor: pointer; color: var(--accent); }
+.cambios {
+  white-space: pre-wrap;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  background: #f2f0e9;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 8px 0;
+}
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--rule); }
+th { color: var(--soft); font-weight: 600; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.inferido td { background: #fbf3e2; }
+.estado { margin-top: 10px; min-height: 1.2em; }
+.estado.ok { color: var(--accent); }
+.estado.err { color: var(--crit); }
+.pie { color: var(--soft); font-size: 12px; margin-top: 18px; }
+code { background: #f2f0e9; padding: 1px 4px; border-radius: 3px; }

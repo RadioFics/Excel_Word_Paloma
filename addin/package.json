@@ -1,0 +1,31 @@
+{
+  "name": "generador-fs-addin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Add-in de Word que actualiza in situ las tablas del Estado de Situacion Financiera desde el Excel modelo.",
+  "scripts": {
+    "build": "webpack --mode production",
+    "build:dev": "webpack --mode development",
+    "dev-server": "webpack serve --mode development",
+    "start": "office-addin-debugging start manifest.xml",
+    "stop": "office-addin-debugging stop manifest.xml",
+    "validate": "office-addin-manifest validate manifest.xml",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/office-js": "^1.0.377",
+    "copy-webpack-plugin": "^12.0.2",
+    "html-webpack-plugin": "^5.6.0",
+    "office-addin-debugging": "^6.0.0",
+    "office-addin-dev-certs": "^1.13.0",
+    "office-addin-manifest": "^1.13.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.5.4",
+    "webpack": "^5.94.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.0.4"
+  }
+}

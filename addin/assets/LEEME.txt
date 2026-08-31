@@ -1,0 +1,9 @@
+Faltan los iconos del add-in. Crea aquí tres PNG cuadrados:
+
+  icon-16.png   16x16
+  icon-32.png   32x32
+  icon-80.png   80x80
+
+Sin ellos el complemento carga igual, solo que sin icono en la cinta.
+El generador de Yeoman (yo office) trae un juego de iconos de ejemplo si
+necesitas un punto de partida.

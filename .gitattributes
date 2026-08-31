@@ -1,2 +1,11 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normaliza saltos de linea. Los .bat/.ps1 se quedan en CRLF (Windows).
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binarios: sin conversion ni diff textual
+*.xlsx binary
+*.docx binary
+*.dotx binary
+*.png binary
+*.zip binary
