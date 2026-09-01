@@ -491,27 +491,63 @@ def comprobar_escribible(ruta):
     )
 
 
-def guardar_seguro(doc, ruta):
-    """Guarda escribiendo primero a un temporal de la misma carpeta y luego
-    reemplazando de un golpe.
-
-    os.replace() es atómico dentro del mismo volumen: o queda el documento
-    nuevo entero, o queda el viejo intacto. Nunca un archivo a medio
-    escribir. Importa especialmente en OneDrive, que sincroniza en cuanto
-    ve cambios.
-    """
-    ruta = Path(ruta)
-    tmp = ruta.parent / f".{ruta.stem}.tmp{ruta.suffix}"
-    try:
-        doc.save(str(tmp))
-        os.replace(tmp, ruta)
-    except Exception:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-        raise
+def guardar_seguro(doc, ruta):
+    """Guarda SIN cambiar la identidad del archivo en el disco.
+
+    Antes esto era doc.save() a un temporal de la misma carpeta y luego
+    os.replace(). Es atómico y en un disco normal está bien, pero en una
+    carpeta de OneDrive rompe la sincronización, y de forma silenciosa:
+
+      - os.replace() borra el archivo original y pone otro en su sitio. El
+        archivo que queda tiene un File ID de NTFS NUEVO.
+      - OneDrive lleva su base de datos indexada por ese File ID, no por la
+        ruta. Al no reconocerlo, no lo lee como «el documento cambió», sino
+        como «el documento desapareció y hay uno desconocido en su sitio».
+      - Su forma de resolver ese conflicto es reponer la versión que tiene
+        en el servidor. Minutos después el archivo local vuelve a ser el de
+        antes y los cambios se han perdido sin un solo mensaje de error.
+
+    Con Archivos a Petición es todavía más claro: el original es un punto
+    de reanalisis (placeholder) y el temporal no, así que ni siquiera son
+    el mismo tipo de archivo.
+
+    Ahora se hace al revés, que es como escribe Word: se serializa entero a
+    un temporal FUERA de la carpeta sincronizada (para que OneDrive no vea
+    aparecer y desaparecer archivos sueltos), se comprueba que el resultado
+    es un .docx legible, y solo entonces se vuelca sobre el archivo original
+    abriéndolo en modo r+b. El archivo conserva su identidad y OneDrive lo
+    ve como lo que es: una modificación normal.
+    """
+    import tempfile
+    import zipfile
+
+    ruta = Path(ruta)
+
+    # 1. Serializar fuera de la carpeta sincronizada.
+    tmp = Path(tempfile.gettempdir()) / f"fs_{os.getpid()}_{ruta.name}"
+    try:
+        doc.save(str(tmp))
+        if not zipfile.is_zipfile(tmp):
+            raise ValueError(
+                "El documento generado no es un .docx legible; no se "
+                "escribe nada sobre el original."
+            )
+        datos = tmp.read_bytes()
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+    # 2. Volcar sobre el original conservando su identidad.
+    if ruta.exists():
+        with open(ruta, "r+b") as f:
+            f.write(datos)
+            f.truncate()
+            f.flush()
+            os.fsync(f.fileno())
+    else:
+        ruta.write_bytes(datos)
 
 
 # --------------------------------------------------------------------------- #

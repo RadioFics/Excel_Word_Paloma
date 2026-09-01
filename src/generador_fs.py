@@ -72,6 +72,13 @@ from jinja2.sandbox import SandboxedEnvironment
 # ahí donde están config.json, salidas\ y las carpetas de recursos.
 if getattr(sys, "frozen", False):
     BASE = Path(sys.executable).resolve().parent
+    # El .exe suele quedarse donde lo dejó PyInstaller: dentro de dist\, un
+    # nivel por debajo del proyecto. Si ahí no hay config.json pero sí lo
+    # hay justo encima, la carpeta del proyecto es la de encima. Sin esto el
+    # .exe lee la config EMBEBIDA (la del día que se compiló), ignora los
+    # cambios de config.json y escribe salidas\ y la bitácora en dist\.
+    if not (BASE / "config.json").exists() and (BASE.parent / "config.json").exists():
+        BASE = BASE.parent
     RECURSOS = Path(getattr(sys, "_MEIPASS", BASE))
 else:
     BASE = Path(__file__).resolve().parent.parent
