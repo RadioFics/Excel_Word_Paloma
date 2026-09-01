@@ -3,6 +3,16 @@
 Convierte la hoja del **Estado de Situación Financiera** de tu Excel en un
 documento de **Word** con el formato de la plantilla ya aplicado.
 
+Hay **dos maneras** de usarlo, y hacen cosas distintas:
+
+| | Qué hace | Cuándo |
+|---|---|---|
+| **`GeneradorFS.exe`** | Crea un Word **nuevo** cada vez, desde la plantilla. | Entrega puntual. Lo que escribas en el Word **no sobrevive** a la siguiente corrida. |
+| **`fs_documento.py`** | **Refresca** un documento **que ya existe** y conserva tu redacción. | Documento vivo en OneDrive que se actualiza cada cierre. |
+
+Si lo que quieres es *«escribo mis párrafos y las cifras se actualizan
+solas»*, la segunda. Sigue en [Documento base vivo](#documento-base-vivo).
+
 ---
 
 ## Descargar y usar
@@ -89,6 +99,101 @@ que lo pone en cuarentena sin opción de continuar): no lo fuerces.
 Repórtalo — es uno de los datos que esta prueba busca confirmar.
 
 ---
+
+## Documento base vivo
+
+El modo en el que **el mismo documento** se mantiene al día sin perder lo
+que hayas escrito.
+
+### La idea
+
+El documento **no se regenera**: se le **refrescan unas regiones concretas**
+(la tabla, los campos de encabezado, las cifras que intercales en la
+redacción). Todo lo demás ni se visita.
+
+- Escribes un párrafo → refrescas → **el párrafo sigue ahí**, con las cifras
+  al día.
+- Borras ese párrafo → refrescas → **sigue borrado**. El motor nunca
+  reinyecta prosa, porque nunca la guardó.
+- Las tablas y las cifras van **bloqueadas**: nadie las pisa a mano.
+
+La especificación completa está en **[`CONTRATO.md`](CONTRATO.md)**.
+
+### Preparar tu documento (una vez)
+
+Parte de la plantilla lista, o de un documento tuyo:
+
+```bash
+python fs_documento.py construir "MI_DOCUMENTO.docx"
+```
+
+Añade lo que le falte para cumplir el contrato **sin borrar nada**. Puedes
+correrlo sobre un documento con meses de redacción encima: solo agrega las
+anclas que no estén. También hay una plantilla ya armada:
+[`plantilla_base_EF.docx`](plantilla_base_EF.docx).
+
+### Cada cierre
+
+```bash
+python fs_documento.py refrescar "MI_DOCUMENTO.docx" "MI_LIBRO.xlsx"
+```
+
+Reescribe la tabla y los campos, antepone a la bitácora del documento el
+detalle de qué cifra cambió, y deja una copia `.bak` por si acaso.
+
+### Intercalar una cifra viva en la redacción
+
+Para escribir *«los activos totales ascendieron a **119,066,301**»* y que esa
+cifra siga al Excel:
+
+```bash
+python fs_documento.py catalogo
+```
+
+te lista las claves disponibles. Luego, o bien la insertas desde Word
+(control de contenido de texto con la Etiqueta `fs-dato-total_assets-actual`),
+o bien:
+
+```bash
+python fs_documento.py insertar "MI_DOCUMENTO.docx" total_assets actual
+```
+
+Campos: `actual`, `previo`, `nota`, `var_abs`, `var_pct`.
+
+### Los dos editores
+
+Por defecto las regiones de datos están bloqueadas pero la prosa es libre en
+todo el documento. Si quieres el modo estricto:
+
+```bash
+python fs_documento.py proteger "MI_DOCUMENTO.docx" --clave TU_CLAVE
+```
+
+| Rol | Puede | No puede |
+|---|---|---|
+| **Redactor** | escribir en las zonas `fs-prosa-*` | tocar tablas, campos ni cifras |
+| **Editor de datos** | lo anterior + refrescar | — (tiene la clave) |
+
+Para volver atrás: `python fs_documento.py desproteger "MI_DOCUMENTO.docx"`.
+
+### Órdenes
+
+| Orden | Para qué |
+|---|---|
+| `construir` / `reparar` | Añade las anclas que falten. No destruye nada. |
+| `refrescar` | Actualiza las regiones de datos desde el Excel. |
+| `insertar` | Coloca una cifra viva en una zona de prosa. |
+| `catalogo` | Lista las claves disponibles en el Excel. |
+| `verificar` | Revisa el documento: anclas huérfanas, regiones vacías. |
+| `plantilla` | Genera un documento base nuevo desde cero. |
+| `proteger` / `desproteger` | Modo estricto de dos editores. |
+
+### Antes de refrescar
+
+**Cierra el documento en Word.** El motor escribe el archivo directamente; si
+Word lo tiene abierto, se pelean. Y la co-autoría de Word en el navegador
+maneja mal los controles de contenido: refresca desde el escritorio.
+
 ---
 
 ## Para desarrollo (no necesario para usar el `.exe`)
@@ -97,6 +202,7 @@ El `.exe` se genera desde `generador_fs.py` (Python). Para trabajar el código:
 
 | Documento | Contenido |
 |---|---|
+| [`CONTRATO.md`](CONTRATO.md) | Contrato de anclas Excel⇄Word. Lo comparten el motor de Python y el add-in. |
 | [`INSTALACION.md`](INSTALACION.md) | Montar Python portable en `.\python\` sin permisos de administrador. |
 | [`PRUEBA_EXTERNA.md`](PRUEBA_EXTERNA.md) | Reproducir la prueba en otro equipo (con el `.exe` o clonando). |
 | [`DIRECCION.md`](DIRECCION.md) | Dirección del proyecto, alternativas y caso ante TI. |
@@ -139,10 +245,15 @@ recompilar, deja un `config.json` propio en la misma carpeta que el `.exe`:
 ### Límites
 
 - Un solo tipo de estado (Situación Financiera). Otro estado = otra plantilla.
-- No traslada cifras sueltas dentro de párrafos; solo tablas.
 - La deducción de tipos es heurística: por eso está `revisar_tipos.csv`.
-- Genera un Word **nuevo** cada vez. Actualizar *el mismo* documento en su
-  sitio es el add-in (`addin/`).
+- `GeneradorFS.exe` genera un Word **nuevo** cada vez. Para actualizar *el
+  mismo* documento conservando la redacción, use `fs_documento.py`
+  ([arriba](#documento-base-vivo)); el add-in (`addin/`) hace lo mismo desde
+  un panel dentro de Word.
+- Las cifras sueltas dentro de párrafos requieren marcarlas una vez con un
+  control de contenido (`fs-dato-…`); no se detectan solas.
+- El vínculo cifra↔prosa se apoya en la etiqueta de la fila del Excel: si se
+  renombra una fila, el ancla queda huérfana (se reporta, no falla).
 - Solo Windows de 64 bits.
 
 ### Trazabilidad

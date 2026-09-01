@@ -4,11 +4,27 @@ Panel dentro de **Word** con un botón que trae las cifras del Excel modelo a
 las tablas de **este mismo documento** — sin generar un archivo nuevo — y
 deja una entrada de bitácora con los cambios.
 
-> **Estado: v0 (andamiaje).** El código está escrito pero **no se ha
-> compilado ni probado** todavía (necesita un equipo con Node.js). Sirve
-> como base para iterar. Los criterios de mapeo (`src/core/tipos.ts`,
-> `leer-excel.ts`) son el mismo modelo que `generador_fs.py`, portado a
+> **Estado: v0.2 (andamiaje, sin compilar).** El código está escrito pero
+> **no se ha compilado ni probado** (necesita un equipo con Node.js). Los
+> criterios de mapeo son el mismo modelo que `generador_fs.py`, portado a
 > TypeScript.
+>
+> Lo que sí está probado de punta a punta es **el motor de Python
+> equivalente** (`fs_documento.py`, en la raíz): mismo contrato de anclas,
+> misma semántica de refresco, verificado abriendo los documentos en Word.
+> El add-in es la misma operación desde un panel; el motor de Python es la
+> referencia de comportamiento.
+
+## El contrato
+
+Ambos lados —este add-in y `fs_documento.py`— hablan el mismo vocabulario de
+anclas, especificado en **[`../CONTRATO.md`](../CONTRATO.md)** y portado en
+`src/core/contrato.ts`. **Si cambia uno, cambia el otro.**
+
+Regla central: el refresco solo escribe dentro de controles de las familias
+`fs-tabla-*`, `fs-campo-*`, `fs-dato-*`, `fs-registro` y `fs-meta`. Las zonas
+`fs-prosa-*` y la prosa suelta no se visitan, y por eso la redacción
+sobrevive intacta.
 
 ## Qué hace
 
@@ -21,17 +37,20 @@ deja una entrada de bitácora con los cambios.
    versión aplicada (guardada dentro del propio `.docx`) y lo antepone a la
    sección de bitácora.
 
-## Preparar la plantilla de Word (una vez)
+## Preparar el documento base (una vez)
 
-Activa la pestaña **Programador** (Archivo → Opciones → Personalizar cinta).
-Envuelve cada zona en un **Control de contenido de texto enriquecido** y
-ponle una **Etiqueta** (Propiedades del control → Etiqueta):
+Lo más rápido es dejar que lo arme el motor de Python:
 
-| Etiqueta | Envuelve |
-|---|---|
-| `fs-tabla-principal` | la tabla del estado (4 columnas: Concepto · Nota · Periodo actual · Periodo comparativo, + fila de encabezado) |
-| `fs-registro` | un párrafo/sección vacía para la bitácora (opcional) |
-| `fs-titulo`, `fs-fecha-actual`, `fs-fecha-previa`, `fs-miles`, `fs-moneda` | los textos de encabezado (opcional) |
+```
+python fs_documento.py construir "MI_DOCUMENTO.docx"
+```
+
+Deja todas las anclas puestas, bloqueadas y con el formato correcto. Es
+idempotente: se puede correr sobre un documento con redacción encima.
+
+A mano, desde Word: pestaña **Programador** (Archivo → Opciones →
+Personalizar cinta) → **Control de contenido** → *Propiedades* → **Etiqueta**.
+Ver [`../CONTRATO.md`](../CONTRATO.md) para el vocabulario completo.
 
 ## Desarrollo (equipo con Node.js 18+)
 
@@ -72,19 +91,26 @@ manifest.xml            manifiesto del add-in (Word, ReadWriteDocument)
 package.json             dependencias y scripts
 webpack.config.js        build + dev-server HTTPS
 src/taskpane/            panel: HTML, CSS, TS (orquesta el flujo)
+src/core/contrato.ts      vocabulario de anclas (puerto de fs_contrato.py)
 src/core/tipos.ts         modelo de tipos de fila + inferencia (== Python)
 src/core/leer-excel.ts     parseo del .xlsx -> Contexto (detección por contenido)
-src/core/escribir-word.ts  reescribe tablas y campos en el documento actual
+src/core/escribir-word.ts  refresca las regiones de datos del documento actual
 src/core/registro.ts       snapshot en el .docx + cálculo de cambios
 ```
 
-## Limitaciones conocidas de v0
+## Limitaciones conocidas
 
-- Sin probar/compilar (no había Node en el equipo de desarrollo inicial).
-- Una sola tabla (`fs-tabla-principal`). Añadir notas = repetir el patrón
-  con otras etiquetas.
-- `addRows` asume que la tabla de la plantilla tiene exactamente 4 columnas.
-- El formato fino (sangrías, líneas de subtotal) se hereda de la fila de
-  encabezado de la plantilla; puede requerir ajuste por estilo de celda.
-- Lee el Excel eligiéndolo a mano. La variante con Microsoft Graph
-  (leer el libro directamente de OneDrive) es un paso posterior.
+- **Sin compilar ni probar** (no hay Node en el equipo de desarrollo). El
+  comportamiento de referencia es `fs_documento.py`, que sí está verificado.
+- `addRows` asume que la tabla tiene exactamente 4 columnas.
+- El formato por tipo de fila que aplica el add-in (negrita en H/S/T) es más
+  pobre que el del motor de Python (sangrías, filetes de subtotal y total).
+  Un documento construido con Python y refrescado con el add-in **pierde
+  esos filetes**. Igualarlo es el siguiente trabajo pendiente.
+- Falta en el panel el catálogo de claves y el botón «insertar dato»
+  (`insertarDato()` ya existe en `escribir-word.ts`, pero no está cableado
+  al HTML).
+- No aplica ni retira `documentProtection`: el modo estricto de dos editores
+  hay que gestionarlo hoy desde Python o desde Word.
+- Lee el Excel eligiéndolo a mano. La variante con Microsoft Graph (leer el
+  libro directamente de OneDrive) es un paso posterior.

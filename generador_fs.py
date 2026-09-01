@@ -483,8 +483,13 @@ def construir_lineas(valores, negrita, cols, cfg, primera, ultima, hay_col_tipo)
         nota = texto(vals[cn]) if cn else ""
         actual = num(vals[ca]) if ca else ""
         previo = num(vals[cp]) if cp else ""
+        # *_raw: el valor sin formatear. Lo usa fs_contrato para calcular
+        # variaciones (var_abs / var_pct). docxtpl ignora las claves de más.
         lineas.append({"tipo": tipo, "etiqueta": etiqueta, "nota": nota,
-                       "actual": actual, "previo": previo})
+                       "actual": actual, "previo": previo,
+                       "fila": r,
+                       "actual_raw": vals[ca] if ca else None,
+                       "previo_raw": vals[cp] if cp else None})
         revision.append((r, etiqueta, nota, actual, previo, tipo, origen, senal))
         if origen == "declarado":
             n_declarados += 1

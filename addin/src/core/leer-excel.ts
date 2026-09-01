@@ -315,6 +315,9 @@ export async function leerContexto(buf: ArrayBuffer, aj: Ajustes = AJUSTES_DEFEC
       nota: cn ? texto(vals[cn]) : "",
       actual: ca ? num(vals[ca]) : "",
       previo: cp ? num(vals[cp]) : "",
+      // sin formatear: los necesita contrato.ts para var_abs / var_pct
+      actualRaw: ca ? vals[ca] : null,
+      previoRaw: cp ? vals[cp] : null,
       origen,
       senal,
     });

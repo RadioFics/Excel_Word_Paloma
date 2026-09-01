@@ -62,6 +62,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.inferido td { background: #fbf3e2; }
 .estado { margin-top: 10px; min-height: 1.2em; }
 .estado.ok { color: var(--accent); }
+.estado.warn { color: var(--warn); }
 .estado.err { color: var(--crit); }
 .pie { color: var(--soft); font-size: 12px; margin-top: 18px; }
 code { background: #f2f0e9; padding: 1px 4px; border-radius: 3px; }

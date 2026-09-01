@@ -12,13 +12,11 @@
  */
 import { Contexto } from "../core/tipos";
 import { leerContexto, AJUSTES_DEFECTO } from "../core/leer-excel";
-import { actualizarTabla, actualizarCampos, escribirRegistro } from "../core/escribir-word";
+import { refrescarDocumento, escribirRegistro } from "../core/escribir-word";
 import { leerSnapshot, guardarSnapshot, calcularCambios } from "../core/registro";
 
-const TAG_TABLA = "fs-tabla-principal";
-const TAG_REGISTRO = "fs-registro";
-
 let ctxActual: Contexto | null = null;
+let nombreOrigen = "";
 
 Office.onReady((info) => {
   if (info.host !== Office.HostType.Word) {
@@ -45,6 +43,7 @@ async function onArchivo(ev: Event) {
     const buf = await file.arrayBuffer();
     const ctx = await leerContexto(buf, AJUSTES_DEFECTO);
     ctxActual = ctx;
+    nombreOrigen = file.name;
 
     const previo = leerSnapshot();
     const cambios = calcularCambios(previo, ctx);
@@ -98,25 +97,25 @@ async function onAplicar() {
   estado.textContent = "Actualizando el documento…";
 
   try {
-    await actualizarCampos({
-      "fs-titulo": ctx.titulo,
-      "fs-fecha-actual": ctx.fechaActual,
-      "fs-fecha-previa": ctx.fechaPrevia,
-      "fs-miles": ctx.miles,
-      "fs-moneda": ctx.moneda,
-    });
-
-    const n = await actualizarTabla(TAG_TABLA, ctx);
+    // Una sola pasada: tablas, campos de encabezado y cifras sueltas.
+    // Las zonas fs-prosa-* no se tocan.
+    const inf = await refrescarDocumento(ctx);
 
     const previo = leerSnapshot();
     const cambios = calcularCambios(previo, ctx);
-    const conRegistro = await escribirRegistro(TAG_REGISTRO, cambios);
+    const conRegistro = await escribirRegistro(cambios, nombreOrigen);
     await guardarSnapshot(ctx);
 
-    estado.className = "estado ok";
+    const filas = inf.tablas.reduce((n, t) => n + t.filas, 0);
+    estado.className = inf.huerfanos.length ? "estado warn" : "estado ok";
     estado.textContent =
-      `Listo: ${n} filas actualizadas en la tabla. ` +
+      `Listo: ${filas} filas en ${inf.tablas.length} tabla(s), ` +
+      `${inf.campos} campos y ${inf.datos} cifras en la redacción. ` +
+      `${inf.prosaIntacta} zona(s) de prosa sin tocar. ` +
       (conRegistro ? "Bitácora añadida. " : "") +
+      (inf.huerfanos.length
+        ? `AVISO: ${inf.huerfanos.length} ancla(s) sin dato en el Excel (${inf.huerfanos.join(", ")}). `
+        : "") +
       "Guarda el documento (Ctrl+S).";
   } catch (e: any) {
     estado.className = "estado err";

@@ -17,9 +17,19 @@ Plan en tres frentes, en paralelo:
 | **C. Add-in de Office** | Panel dentro de Word: botón "Actualizar desde Excel", **actualiza el mismo documento** | Semanas | 1 revisión + despliegue centralizado |
 
 El requisito del cliente es explícito: **el mismo documento actualiza sus
-datos**, no se genera uno nuevo. Los frentes A y C cumplen ese requisito por
-diseño. El frente B (script actual) genera un archivo nuevo y sirve como
-puente mientras C está listo.
+datos**, no se genera uno nuevo.
+
+> **Actualización.** El frente B ya cumple ese requisito. `fs_documento.py`
+> refresca **en el sitio** un documento existente conservando la redacción,
+> con el mismo contrato de anclas que usará el add-in
+> ([`CONTRATO.md`](CONTRATO.md)). Verificado abriendo los documentos en Word:
+> refresco idempotente, prosa intacta, tablas y cifras bloqueadas, y el modo
+> de dos editores funcionando (`documentProtection` + rangos editables).
+>
+> Con eso, **el frente B deja de ser un puente y pasa a ser la solución
+> operativa** mientras el frente C consigue su revisión de TI. El frente C
+> ya no tiene que demostrar el concepto: solo trasladar la misma operación
+> —ya especificada y probada— a un panel dentro de Word.
 
 ---
 

@@ -30,3 +30,6 @@ __pycache__/
 ~$*
 Thumbs.db
 .DS_Store
+
+# Copias previas que deja fs_documento.py antes de escribir un documento
+*.docx.bak

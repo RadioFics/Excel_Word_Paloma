@@ -12,6 +12,9 @@ export interface Linea {
   nota: string;
   actual: string; // ya formateado en estilo contable
   previo: string;
+  /** Valor sin formatear, para calcular variaciones. Ver contrato.ts. */
+  actualRaw?: unknown;
+  previoRaw?: unknown;
   origen: "declarado" | "inferido";
   senal: string;
 }
