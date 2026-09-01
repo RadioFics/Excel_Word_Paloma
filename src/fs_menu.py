@@ -41,6 +41,16 @@ import refrescar_fs as R
 ANCHO = 68
 
 
+def _opcion(argv, nombre):
+    """El valor que sigue a una bandera, o None si no lleva ninguno."""
+    for i, a in enumerate(argv):
+        if a.lower() == nombre and i + 1 < len(argv):
+            siguiente = argv[i + 1]
+            if not siguiente.startswith("--"):
+                return siguiente
+    return None
+
+
 def _cabecera():
     print()
     print("=" * ANCHO)
@@ -59,6 +69,36 @@ def _describir_destino():
         return doc.name
     except Exception:
         return "sin configurar (config.json -> documento_base)"
+
+
+def _resolver_libro(args):
+    """Qué Excel se va a leer, y de dónde ha salido.
+
+    Devuelve (ruta o None, texto para la ventana, aviso o None).
+
+    Hay que saberlo ANTES de dibujar el menú. Si no, el usuario arrastra su
+    libro y la ventana no le dice si lo ha recogido; y cuando no arrastra
+    nada, encontrar_excel_por_convencion() coge en silencio cualquier .xlsx
+    de la carpeta cuyo nombre contenga la clave de convención —incluido el
+    de ejemplos\— y las cifras de muestra acaban dentro del documento real
+    sin que nadie lo haya pedido.
+    """
+    if args:
+        ruta = Path(args[0]).resolve()
+        if not ruta.exists():
+            return (None, f"NO EXISTE: {ruta.name}",
+                    f"El archivo indicado no existe:\n  {ruta}")
+        return ruta, ruta.name, None
+    try:
+        cfg = G.cargar_config()
+        ruta = G.encontrar_excel_por_convencion(cfg)
+    except Exception:
+        return None, "", None
+    return ruta, f"{ruta.name}  (elegido solo, por convención de nombre)", (
+        f"No se arrastró ningún Excel. Se ha elegido «{ruta.name}» porque su\n"
+        f"nombre contiene «{cfg.get('buscar_por_convencion')}» y es el más reciente\n"
+        f"de la carpeta. Si no es el libro que quería, cierre y arrástrelo encima."
+    )
 
 
 #: Ventana del menú. Se dibuja con WinForms desde PowerShell porque el
@@ -90,7 +130,8 @@ Add-Type -AssemblyName System.Drawing | Out-Null
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $documento = if ($args.Count -ge 1) { $args[0] } else { '' }
-$captura   = if ($args.Count -ge 2) { $args[1] } else { '' }
+$libro     = if ($args.Count -ge 2) { $args[1] } else { '' }
+$captura   = if ($args.Count -ge 3) { $args[2] } else { '' }
 
 # escala real de la pantalla
 $g = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
@@ -126,7 +167,7 @@ $fInfo    = if ($hayIconos) { New-Object System.Drawing.Font('Segoe MDL2 Assets'
 
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'Estados Financieros'
-$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 580))
+$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 600))
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = $fondo
 $f.FormBorderStyle = 'FixedSingle'
@@ -152,9 +193,21 @@ $lSub.Text = if ($documento) { "Documento: $documento" } else { 'Sin documento c
 $lSub.Font = $fSub
 $lSub.ForeColor = $suave
 $lSub.AutoEllipsis = $true
-$lSub.Location = New-Object System.Drawing.Point((S 32), (S 66))
+$lSub.Location = New-Object System.Drawing.Point((S 32), (S 62))
 $lSub.Size = New-Object System.Drawing.Size((S 600), (S 22))
 $f.Controls.Add($lSub)
+
+# De donde salen las cifras. Sin esta linea no habia forma de saber si el
+# Excel que se arrastro se recogio o no, ni de distinguirlo del que la
+# aplicacion elige sola por convencion de nombre.
+$lLibro = New-Object System.Windows.Forms.Label
+$lLibro.Text = if ($libro) { "Excel: $libro" } else { 'SIN EXCEL - arrastre el libro sobre el icono; las opciones 1 y 2 lo necesitan' }
+$lLibro.Font = $fSub
+$lLibro.ForeColor = if ($libro) { $suave } else { $ambar }
+$lLibro.AutoEllipsis = $true
+$lLibro.Location = New-Object System.Drawing.Point((S 32), (S 84))
+$lLibro.Size = New-Object System.Drawing.Size((S 600), (S 22))
+$f.Controls.Add($lLibro)
 
 $script:eleccion = '0'
 
@@ -230,21 +283,21 @@ Nueva-Opcion $i.refrescar 'Actualizar el documento de siempre' `
    "la tabla del estado, los campos de encabezado y las cifras que haya`n" +
    "intercalado en la redaccion.`n`n" +
    "Su texto no se toca. Si borro un parrafo, sigue borrado.`n`n" +
-   "Cierre el documento en Word antes de ejecutarlo.") 108 '1' $acento
+   "Cierre el documento en Word antes de ejecutarlo.") 122 '1' $acento
 
 Nueva-Opcion $i.nuevo 'Crear un documento nuevo' `
   'Sale de la plantilla, en la carpeta salidas\.' `
   ("Genera un Word desde cero con las cifras del Excel.`n`n" +
    "Es una foto desechable: sirve para una entrega puntual. Lo que`n" +
    "escriba en el NO pasa al siguiente que genere.`n`n" +
-   "No toca el documento de siempre.") 186 '2' $tinta
+   "No toca el documento de siempre.") 200 '2' $tinta
 
 Nueva-Opcion $i.carpeta 'Cambiar el documento que se actualiza' `
   'Abre el explorador para elegir otro documento de Word.' `
   ("Elige que archivo actualiza la opcion 1, y lo recuerda.`n`n" +
    "Comprueba que sea un .docx valido y le avisa si todavia le faltan`n" +
    "las regiones marcadas.`n`n" +
-   "Queda guardado en config.json.") 264 '3' $tinta
+   "Queda guardado en config.json.") 278 '3' $tinta
 
 Nueva-Opcion $i.abrir 'Permitir editar las cifras a mano en Word' `
   'Ojo: lo que teclee lo machaca el siguiente refresco.' `
@@ -253,7 +306,7 @@ Nueva-Opcion $i.abrir 'Permitir editar las cifras a mano en Word' `
    "AVISO: siguen vinculadas al Excel. Lo que escriba a mano`n" +
    "desaparece en el siguiente refresco.`n`n" +
    "Para que un valor escrito a mano sobreviva, hay que desvincularlo:`n" +
-   "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 342 '4' $ambar
+   "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 356 '4' $ambar
 
 Nueva-Opcion $i.cerrar 'Volver a proteger las cifras' `
   'Word deja de permitir teclear dentro de ellas.' `
@@ -261,7 +314,7 @@ Nueva-Opcion $i.cerrar 'Volver a proteger las cifras' `
    "y a las cifras intercaladas en la redaccion.`n`n" +
    "OJO: solo protege lo que esta dentro de una region marcada. Un`n" +
    "numero copiado y pegado del Excel como texto normal NO queda`n" +
-   "protegido, porque el programa no puede saber que es una cifra.") 420 '5' $tinta
+   "protegido, porque el programa no puede saber que es una cifra.") 434 '5' $tinta
 
 $salir = New-Object System.Windows.Forms.Button
 $salir.Text = 'Salir'
@@ -270,7 +323,7 @@ $salir.ForeColor = $suave
 $salir.BackColor = $fondo
 $salir.FlatStyle = 'Flat'
 $salir.FlatAppearance.BorderSize = 0
-$salir.Location = New-Object System.Drawing.Point((S 540), (S 500))
+$salir.Location = New-Object System.Drawing.Point((S 540), (S 516))
 $salir.Size = New-Object System.Drawing.Size((S 92), (S 34))
 $salir.Cursor = [System.Windows.Forms.Cursors]::Hand
 $salir.Add_Click({ $script:eleccion = '0'; $f.Close() })
@@ -290,7 +343,7 @@ Write-Output ("ELECCION=" + $script:eleccion)
 """
 
 
-def menu_ventana(destino):
+def menu_ventana(destino, libro=""):
     """Muestra el menú en una ventana. Devuelve la opción, o None si no
     se pudo dibujar (entonces el llamante usa el menú de consola)."""
     import subprocess
@@ -302,7 +355,8 @@ def menu_ventana(destino):
         script.write_text(_PS_VENTANA, encoding="utf-8")
         res = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-STA", "-File", str(script), str(destino or ""), ""],
+             "-STA", "-File", str(script),
+             str(destino or ""), str(libro or ""), ""],
             capture_output=True, text=True, timeout=1800,
         )
     except Exception:
@@ -315,13 +369,14 @@ def menu_ventana(destino):
         if linea.startswith("ELECCION="):
             return linea[len("ELECCION="):].strip()
     return None
-def _menu():
+def _menu(texto_libro=""):
     destino = _describir_destino()
     _cabecera()
     print()
     print("   1)  ACTUALIZAR el documento de siempre")
     print("       Conserva todo lo que haya escrito. Solo cambia las cifras.")
     print(f"       Documento: {destino}")
+    print(f"       Excel:     {texto_libro or 'NINGUNO — arrástrelo sobre el icono'}")
     print()
     print("   2)  CREAR un documento nuevo")
     print("       Sale de la plantilla, en la carpeta salidas\\.")
@@ -422,15 +477,26 @@ def ejecutar(argv):
         eleccion = "4"
     elif "--bloquear" in flags:
         eleccion = "5"
-    elif "--documento" in flags:
+    elif "--elegir-documento" in flags or (
+            "--documento" in flags and _opcion(argv, "--documento") is None):
+        # Ojo: refrescar_fs.py usa «--documento OTRO.docx» para apuntar a otro
+        # archivo. Antes el menú se quedaba con la bandera siempre, así que a
+        # través de EstadosFinancieros.exe era imposible refrescar un
+        # documento distinto del de config.json: se abría el explorador.
+        # Ahora solo la intercepta cuando viene suelta, sin ruta detrás.
         eleccion = "3"
     elif "--consola" in flags:
         eleccion = _menu()
     else:
+        eleccion = None
+
+    libro, texto_libro, aviso_libro = _resolver_libro(args)
+
+    if eleccion is None:
         # Primero la ventana; si el equipo no la puede dibujar, la consola.
-        eleccion = menu_ventana(_describir_destino())
+        eleccion = menu_ventana(_describir_destino(), texto_libro)
         if eleccion is None:
-            eleccion = _menu()
+            eleccion = _menu(texto_libro)
 
     if eleccion == "0":
         print(" Nada que hacer.")
@@ -438,17 +504,33 @@ def ejecutar(argv):
 
     # Cada modulo analiza sus propios argumentos: aqui solo se le quitan
     # las banderas del menu y se le pasa el resto tal cual.
-    propias = {"--refrescar", "--generar", "--estado", "--documento",
+    propias = {"--refrescar", "--generar", "--estado", "--elegir-documento",
                "--consola",
                "--desbloquear", "--bloquear"}
+    if eleccion == "3":
+        propias.add("--documento")
     resto = [argv[0]] + [a for a in argv[1:] if a.lower() not in propias]
 
-    if eleccion == "1":
-        R.ejecutar(resto)
-        return 0
-
-    if eleccion == "2":
-        G.ejecutar(resto)
+    if eleccion in ("1", "2"):
+        # Las dos opciones que leen cifras. Antes se entraba a ciegas: si no
+        # había libro, el error saltaba en mitad del proceso; y si lo había
+        # elegido la convención de nombre, no se decía.
+        if libro is None:
+            raise ValueError(
+                (aviso_libro + "\n\n") if aviso_libro else
+                "No hay ningún libro de Excel del que leer las cifras.\n\n"
+                "Arrastre su .xlsx sobre el icono, o pase su ruta en la orden."
+            )
+        if aviso_libro:
+            print()
+            print(" AVISO — " + aviso_libro)
+        print()
+        print(f" Leyendo las cifras de: {libro.name}")
+        print(f" Carpeta:               {libro.parent}")
+        if eleccion == "1":
+            R.ejecutar(resto)
+        else:
+            G.ejecutar(resto)
         return 0
 
     if eleccion == "3":
