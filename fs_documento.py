@@ -16,6 +16,7 @@ borrada, porque el motor nunca la vuelve a inyectar.
     python fs_documento.py insertar   <doc.docx> <clave> <campo> [--zona n]
     python fs_documento.py verificar  <doc.docx> [libro.xlsx]
     python fs_documento.py catalogo   [libro.xlsx]
+    python fs_documento.py nombrar    [libro.xlsx] [--aplicar]
     python fs_documento.py plantilla  <destino.docx>
     python fs_documento.py proteger   <doc.docx> --clave <clave>
     python fs_documento.py desproteger <doc.docx>
@@ -913,10 +914,148 @@ def desproteger(ruta, verbose=True):
 
 
 # --------------------------------------------------------------------------- #
+#  Rangos con nombre en el Excel
+# --------------------------------------------------------------------------- #
+def nombrar_rangos(xlsx, ctx, cfg, solo_simular=True, verbose=True):
+    """Crea en el libro un nombre 'fs_<clave>' por cada línea del estado.
+
+    Se hace con Excel (COM), NO con openpyxl: openpyxl no recalcula fórmulas
+    y al reguardar descartaría el valor cacheado de todas ellas, dejando el
+    Word en blanco. Excel guarda el libro con sus propias reglas y no toca
+    ningún valor.
+
+    Cada nombre apunta a la CELDA DE ETIQUETA de su fila. Así Excel reajusta
+    la referencia solo cuando se insertan o borran filas encima, y el vínculo
+    con el documento de Word no depende del texto de la etiqueta.
+    """
+    meta = ctx.get("_meta") or {}
+    hoja = meta.get("hoja")
+    col_etiqueta = (meta.get("columnas") or {}).get("etiqueta")
+    if not hoja or not col_etiqueta or col_etiqueta == "—":
+        raise ValueError(
+            "No sé en qué hoja/columna poner los nombres.\n"
+            "Ejecute primero 'verificar' para ver cómo se está leyendo el libro."
+        )
+
+    prefijo = str(cfg.get("prefijo_rangos") or "fs_")
+    plan, vistas = [], set()
+    for linea in ctx.get("lineas", []):
+        fila = linea.get("fila")
+        etiqueta = (linea.get("etiqueta") or "").strip()
+        if not fila or not etiqueta:
+            continue                              # subtotales sin etiqueta: se omiten
+        k = linea.get("clave") or C.clave(etiqueta)
+        if not k or k in vistas:
+            continue
+        vistas.add(k)
+        plan.append({
+            "nombre": f"{prefijo}{k}",
+            "refiere": f"='{hoja}'!${col_etiqueta}${fila}",
+            "fila": fila,
+            "etiqueta": etiqueta,
+            "ya": linea.get("clave_origen") == "rango",
+        })
+
+    nuevos = [p for p in plan if not p["ya"]]
+    if verbose:
+        print(f"  Líneas con etiqueta: {len(plan)}")
+        print(f"  Ya tienen rango:     {len(plan) - len(nuevos)}")
+        print(f"  Se crearían:         {len(nuevos)}")
+    if solo_simular or not nuevos:
+        return plan, 0
+
+    return plan, _aplicar_nombres(xlsx, nuevos, verbose=verbose)
+
+
+#: Conduce Excel desde PowerShell en vez de con pywin32. Evita una
+#: dependencia binaria pesada (que además complica el empaquetado con
+#: PyInstaller) y funciona en cualquier Windows con Excel instalado.
+_PS_NOMBRAR = r"""
+$ErrorActionPreference = 'Stop'
+$plan  = Get-Content -Raw -Encoding UTF8 -LiteralPath $args[0] | ConvertFrom-Json
+$libro = $args[1]
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+$creados = 0
+try {
+  $wb = $excel.Workbooks.Open($libro)
+  foreach ($p in $plan) {
+    try { $wb.Names.Add($p.nombre, $p.refiere) | Out-Null; $creados++ }
+    catch { Write-Output "  ! $($p.nombre): $($_.Exception.Message)" }
+  }
+  $wb.Save()
+  $wb.Close($false)
+} finally {
+  $excel.Quit()
+  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
+}
+Write-Output "CREADOS=$creados"
+"""
+
+
+def _aplicar_nombres(xlsx, nuevos, verbose=True):
+    import subprocess
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="fs_nombrar_"))
+    plan_json = tmp / "plan.json"
+    script = tmp / "nombrar.ps1"
+    plan_json.write_text(
+        json.dumps([{"nombre": p["nombre"], "refiere": p["refiere"]} for p in nuevos],
+                   ensure_ascii=False),
+        encoding="utf-8",
+    )
+    script.write_text(_PS_NOMBRAR, encoding="utf-8")
+
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", str(script), str(plan_json), str(Path(xlsx).resolve())],
+            capture_output=True, text=True, timeout=300,
+        )
+    except FileNotFoundError:
+        raise ValueError(
+            "No encontré PowerShell, que es lo que usa esta orden para pilotar Excel.\n"
+            "Cree los nombres a mano: en Excel, seleccione la celda de la etiqueta\n"
+            "y escriba el nombre en el Cuadro de nombres (arriba a la izquierda)."
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError(
+            "Excel tardó demasiado. ¿Está el libro abierto o pidiendo algo en pantalla?\n"
+            "Ciérrelo y vuelva a intentarlo."
+        )
+
+    salida = (res.stdout or "") + (res.stderr or "")
+    creados = 0
+    for linea in salida.splitlines():
+        linea = linea.strip()
+        if linea.startswith("CREADOS="):
+            creados = int(linea.split("=", 1)[1])
+        elif linea.startswith("!") or linea.startswith("! "):
+            if verbose:
+                print(f"    {linea}")
+    if res.returncode != 0 and creados == 0:
+        raise ValueError(
+            "Excel no pudo escribir los nombres:\n"
+            + "\n".join("  " + l for l in salida.strip().splitlines()[:12])
+            + "\n\nCausa habitual: el libro está abierto en Excel. Ciérrelo."
+        )
+    if verbose:
+        print(f"  Nombres creados: {creados}")
+    return creados
+
+
+# --------------------------------------------------------------------------- #
 #  Utilidades de línea de órdenes
 # --------------------------------------------------------------------------- #
 def _cargar_ctx(argumento=None):
-    """Lee el Excel con el motor de generador_fs y devuelve su contexto."""
+    """Lee el Excel con el motor de generador_fs.
+
+    Devuelve (ctx, xlsx, cfg). Se conserva ctx['_meta'] —la orden 'nombrar'
+    necesita saber hoja y columna de etiqueta— y se descartan los avisos,
+    que solo interesan al generador antiguo.
+    """
     import generador_fs as G
 
     cfg = G.cargar_config()
@@ -924,9 +1063,8 @@ def _cargar_ctx(argumento=None):
     if not xlsx.exists():
         raise ValueError(f"No se encontró el libro de Excel:\n  {xlsx}")
     ctx = G.leer_contexto(xlsx, cfg)
-    ctx.pop("_meta", None)
     ctx.pop("_avisos", None)
-    return ctx, xlsx
+    return ctx, xlsx, cfg
 
 
 def _respaldar(ruta):
@@ -959,16 +1097,51 @@ def main(argv):
         return defecto
 
     if orden == "catalogo":
-        ctx, xlsx = _cargar_ctx(args[0] if args else None)
+        ctx, xlsx, _cfg = _cargar_ctx(args[0] if args else None)
         _titulo(f"CIFRAS DISPONIBLES — {xlsx.name}")
-        print(f" {'clave':42} {'actual':>16} {'previo':>16}")
-        print(" " + "-" * 76)
-        for k, etiqueta, actual, previo in C.catalogo(ctx):
-            print(f" {k:42} {actual:>16} {previo:>16}")
+        filas = C.catalogo(ctx)
+        n_rango = sum(1 for f in filas if f[1] == "rango")
+        print(f" {'clave':40} {'origen':9} {'actual':>16} {'previo':>16}")
+        print(" " + "-" * 84)
+        for k, origen, etiqueta, actual, previo in filas:
+            print(f" {k:40} {origen:9} {actual:>16} {previo:>16}")
+        print()
+        print(f" {n_rango} de {len(filas)} claves vienen de un rango con nombre"
+              f" (identidad estable).")
+        if n_rango < len(filas):
+            print(" Las de origen 'etiqueta' se rompen si alguien renombra la fila")
+            print(" en el Excel. Para fijarlas:")
+            print("     python fs_documento.py nombrar <libro.xlsx> --aplicar")
         print()
         print(" Para intercalar una cifra en la prosa, inserte en Word un control")
         print(" de contenido de TEXTO con la etiqueta (Tag):")
         print("     fs-dato-<clave>-actual     (o -previo, -nota, -var_abs, -var_pct)")
+        print("=" * 68)
+        return 0
+
+    if orden == "nombrar":
+        ctx, xlsx, cfg = _cargar_ctx(args[0] if args else None)
+        aplicar = "--aplicar" in flags
+        _titulo(f"RANGOS CON NOMBRE — {xlsx.name}")
+        if aplicar:
+            bak = xlsx.with_suffix(xlsx.suffix + ".bak")
+            shutil.copy2(xlsx, bak)
+            print(f"  Copia previa del libro: {bak.name}")
+        plan, creados = nombrar_rangos(xlsx, ctx, cfg, solo_simular=not aplicar)
+        if not aplicar:
+            print()
+            print("  Esto es una SIMULACIÓN. Para escribirlos en el libro:")
+            print(f"      python fs_documento.py nombrar \"{xlsx.name}\" --aplicar")
+            print()
+            print("  Los nombres se crean con Excel, no con openpyxl: las fórmulas")
+            print("  y sus valores cacheados quedan intactos.")
+            print()
+            print("  Primeros nombres del plan:")
+            for p in plan[:12]:
+                marca = "ya" if p["ya"] else " +"
+                print(f"    {marca} {p['nombre']:44} -> fila {p['fila']}  ({p['etiqueta'][:28]})")
+            if len(plan) > 12:
+                print(f"       … y {len(plan) - 12} más.")
         print("=" * 68)
         return 0
 
@@ -982,7 +1155,7 @@ def main(argv):
         _titulo(f"PLANTILLA BASE — {destino.name}")
         ctx = None
         try:
-            ctx, _ = _cargar_ctx(opcion("--excel"))
+            ctx, _, _cfg = _cargar_ctx(opcion("--excel"))
         except Exception:
             pass
         construir(destino, ctx or {})
@@ -1001,7 +1174,7 @@ def main(argv):
     if orden in ("construir", "reparar"):
         ctx = None
         try:
-            ctx, _ = _cargar_ctx(args[1] if len(args) > 1 else None)
+            ctx, _, _cfg = _cargar_ctx(args[1] if len(args) > 1 else None)
         except Exception:
             pass
         bak = _respaldar(doc_ruta)
@@ -1012,7 +1185,7 @@ def main(argv):
         return 0
 
     if orden == "refrescar":
-        ctx, xlsx = _cargar_ctx(args[1] if len(args) > 1 else None)
+        ctx, xlsx, _cfg = _cargar_ctx(args[1] if len(args) > 1 else None)
         bak = _respaldar(doc_ruta)
         sha = hashlib.sha256(xlsx.read_bytes()).hexdigest()[:12]
         inf = refrescar(
@@ -1070,7 +1243,7 @@ def main(argv):
     if orden == "verificar":
         ctx = None
         try:
-            ctx, _ = _cargar_ctx(args[1] if len(args) > 1 else None)
+            ctx, _, _cfg = _cargar_ctx(args[1] if len(args) > 1 else None)
         except Exception:
             pass
         rep = verificar(doc_ruta, ctx)

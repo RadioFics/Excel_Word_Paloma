@@ -15,6 +15,13 @@ export interface Linea {
   /** Valor sin formatear, para calcular variaciones. Ver contrato.ts. */
   actualRaw?: unknown;
   previoRaw?: unknown;
+  /**
+   * Clave estable venida de un rango con nombre de Excel (`fs_<clave>`).
+   * Si está, manda sobre la clave derivada de la etiqueta: sobrevive a que
+   * alguien renombre la fila. Ver CONTRATO.md §4.
+   */
+  clave?: string;
+  claveOrigen?: "rango" | "etiqueta";
   origen: "declarado" | "inferido";
   senal: string;
 }

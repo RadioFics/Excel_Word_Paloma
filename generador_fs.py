@@ -60,6 +60,7 @@ from datetime import datetime
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.utils.cell import range_boundaries
 from docxtpl import DocxTemplate
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -100,6 +101,11 @@ DEFAULTS = {
     "marcadores_excluir": ["control check", "check", "cuadre", "balance check"],
     "max_filas_scan": 400,
     "max_cols_scan": 16,
+    # Rangos con nombre: un nombre de Excel "fs_total_assets" apunta a la
+    # celda de etiqueta de esa fila y le da una identidad ESTABLE. Si alguien
+    # renombra la fila o inserta filas encima, el nombre sigue apuntando a la
+    # misma línea y el vínculo con el Word no se rompe. Ver CONTRATO.md.
+    "prefijo_rangos": "fs_",
 }
 
 
@@ -512,6 +518,57 @@ def escribir_revision(revision):
 
 
 # --------------------------------------------------------------------------- #
+#  Rangos con nombre — la identidad estable de cada línea
+# --------------------------------------------------------------------------- #
+def leer_rangos_con_nombre(wb, hoja_titulo, cfg):
+    """Devuelve {fila: clave} y {clave: (fila, columna)} de los nombres
+    'fs_*' que apuntan a la hoja elegida.
+
+    Un nombre de Excel sobrevive a que se renombre la etiqueta de la fila y
+    a que se inserten filas encima (Excel reajusta la referencia solo). Por
+    eso es una identidad mucho más firme que el texto de la etiqueta.
+
+    Solo LEE. Nunca reguardamos el libro con openpyxl: descartaría el valor
+    cacheado de todas las fórmulas. Para crear nombres, use la orden
+    'nombrar' de fs_documento.py, que lo hace con Excel.
+    """
+    prefijo = str(cfg.get("prefijo_rangos") or "").strip()
+    if not prefijo:
+        return {}, {}
+
+    por_fila, por_clave = {}, {}
+    try:
+        items = list(wb.defined_names.items())
+    except AttributeError:                       # openpyxl < 3.1
+        items = [(dn.name, dn) for dn in wb.defined_names.definedName]
+
+    for nombre, dn in items:
+        if not nombre.lower().startswith(prefijo.lower()):
+            continue
+        clave = nombre[len(prefijo):].strip().lower()
+        if not clave:
+            continue
+        try:
+            destinos = list(dn.destinations)
+        except Exception:
+            continue                              # #REF! y otros nombres rotos
+        for hoja, coord in destinos:
+            if hoja != hoja_titulo:
+                continue
+            try:
+                celdas = range_boundaries(coord.replace("$", ""))
+            except Exception:
+                continue
+            min_col, min_fila, _, _ = celdas
+            if min_fila is None or min_col is None:
+                continue
+            por_clave[clave] = (min_fila, min_col)
+            por_fila.setdefault(min_fila, clave)
+            break
+    return por_fila, por_clave
+
+
+# --------------------------------------------------------------------------- #
 #  Orquestador de lectura
 # --------------------------------------------------------------------------- #
 def leer_contexto(ruta_xlsx, cfg):
@@ -536,6 +593,32 @@ def leer_contexto(ruta_xlsx, cfg):
         (lineas, revision, sin_tipo, tipo_invalido,
          n_declarados, n_inferidos) = construir_lineas(
             valores, negrita, cols, cfg, primera, ultima, hay_col_tipo)
+
+        # Identidad estable por rango con nombre. La línea que tenga un
+        # nombre 'fs_*' apuntando a su fila lleva esa clave; el resto cae
+        # en la clave derivada de la etiqueta (frágil ante renombrados).
+        rangos_por_fila, rangos_por_clave = leer_rangos_con_nombre(
+            wb, hoja_titulo, cfg)
+        n_con_rango = 0
+        for linea in lineas:
+            clave_rango = rangos_por_fila.get(linea.get("fila"))
+            if clave_rango:
+                linea["clave"] = clave_rango
+                linea["clave_origen"] = "rango"
+                n_con_rango += 1
+            else:
+                linea["clave_origen"] = "etiqueta"
+
+        # Nombres que apuntan fuera de la región de datos: escalares sueltos
+        # (una fecha de corte, un tipo de cambio…). Se exponen con el campo
+        # 'actual' para poder intercalarlos en la redacción igual que una cifra.
+        escalares = {}
+        filas_de_lineas = {l.get("fila") for l in lineas}
+        for clave, (fila, columna) in rangos_por_clave.items():
+            if fila in filas_de_lineas:
+                continue
+            if 0 < fila < len(valores) and 0 < columna <= cfg["max_cols_scan"]:
+                escalares[clave] = valores[fila][columna]
     finally:
         wb.close()
 
@@ -549,6 +632,7 @@ def leer_contexto(ruta_xlsx, cfg):
         )
 
     ctx["lineas"] = lineas
+    ctx["escalares"] = escalares
     ctx["_meta"] = {
         "hoja": hoja_titulo,
         "como_hoja": como_hoja,
@@ -557,6 +641,8 @@ def leer_contexto(ruta_xlsx, cfg):
         "hay_col_tipo": hay_col_tipo,
         "n_declarados": n_declarados,
         "n_inferidos": n_inferidos,
+        "n_con_rango": n_con_rango,
+        "n_escalares": len(escalares),
     }
     ctx["_avisos"] = {
         "sin_tipo": sin_tipo,

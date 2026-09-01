@@ -160,6 +160,16 @@ def _num_contable(valor):
     return f"{valor:,.0f}"
 
 
+def clave_de_linea(linea):
+    """La clave con la que se identifica una línea en el documento.
+
+    Prefiere el rango con nombre de Excel (identidad estable: sobrevive a
+    que se renombre la etiqueta o se inserten filas). Si la línea no tiene
+    rango, cae en la clave derivada del texto de la etiqueta.
+    """
+    return linea.get("clave") or clave(linea.get("etiqueta"))
+
+
 def construir_valores(ctx):
     """Del contexto del Excel al mapa {tag: texto} de cifras sueltas y campos.
 
@@ -175,8 +185,15 @@ def construir_valores(ctx):
         v = ctx.get(nombre, "")
         valores[tag_campo(nombre)] = "" if v is None else str(v)
 
+    # Escalares de rangos con nombre que caen fuera de la tabla (una fecha
+    # de corte, un tipo de cambio…). Se exponen solo con el campo 'actual'.
+    for k, v in (ctx.get("escalares") or {}).items():
+        valores[tag_dato(k, "actual")] = _num_contable(v)
+        for campo in ("previo", "nota", "var_abs", "var_pct"):
+            valores.setdefault(tag_dato(k, campo), "")
+
     for linea in ctx.get("lineas", []):
-        k = clave(linea.get("etiqueta"))
+        k = clave_de_linea(linea)
         if not k:
             continue
         if k in vistas:
@@ -205,16 +222,27 @@ def construir_valores(ctx):
 def catalogo(ctx):
     """Lista legible de las cifras sueltas disponibles, para el panel/informe.
 
-    Devuelve [(clave, etiqueta, actual, previo), ...] en el orden del Excel.
+    Devuelve [(clave, origen, etiqueta, actual, previo), ...] en el orden del
+    Excel. `origen` es 'rango' (identidad estable) o 'etiqueta' (derivada del
+    texto, se rompe si alguien renombra la fila).
     """
     filas = []
     vistas = set()
     for linea in ctx.get("lineas", []):
-        k = clave(linea.get("etiqueta"))
+        k = clave_de_linea(linea)
         if not k or k in vistas:
             continue
         vistas.add(k)
-        filas.append(
-            (k, linea.get("etiqueta", ""), linea.get("actual", ""), linea.get("previo", ""))
-        )
+        filas.append((
+            k,
+            linea.get("clave_origen", "etiqueta"),
+            linea.get("etiqueta", ""),
+            linea.get("actual", ""),
+            linea.get("previo", ""),
+        ))
+    for k, v in sorted((ctx.get("escalares") or {}).items()):
+        if k in vistas:
+            continue
+        vistas.add(k)
+        filas.append((k, "rango", "(escalar fuera de la tabla)", _num_contable(v), ""))
     return filas

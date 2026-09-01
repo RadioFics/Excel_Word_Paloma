@@ -106,6 +106,15 @@ export function clave(etiqueta: unknown): string {
   return s.slice(0, 40).replace(/_+$/g, "");
 }
 
+/**
+ * La clave con la que se identifica una línea en el documento.
+ * Prefiere el rango con nombre de Excel (identidad estable ante renombrados);
+ * si no lo hay, cae en la clave derivada del texto de la etiqueta.
+ */
+export function claveDeLinea(l: Linea): string {
+  return l.clave || clave(l.etiqueta);
+}
+
 /** Formato contable, igual que tipos.num(): negativos entre paréntesis. */
 function numContable(v: number): string {
   const s = Math.abs(Math.round(v)).toLocaleString("en-US");
@@ -141,7 +150,7 @@ export function construirValores(ctx: Contexto): ValoresConstruidos {
   }
 
   for (const l of ctx.lineas) {
-    const k = clave(l.etiqueta);
+    const k = claveDeLinea(l);
     if (!k) continue;
     if (vistas.has(k)) {
       colisiones.push({ nueva: l.etiqueta, primera: vistas.get(k)!, clave: k });
@@ -171,7 +180,7 @@ export function catalogo(ctx: Contexto): Array<[string, string, string, string]>
   const out: Array<[string, string, string, string]> = [];
   const vistas = new Set<string>();
   for (const l of ctx.lineas) {
-    const k = clave(l.etiqueta);
+    const k = claveDeLinea(l);
     if (!k || vistas.has(k)) continue;
     vistas.add(k);
     out.push([k, l.etiqueta, l.actual, l.previo]);

@@ -11,7 +11,8 @@ Hay **dos maneras** de usarlo, y hacen cosas distintas:
 | **`fs_documento.py`** | **Refresca** un documento **que ya existe** y conserva tu redacción. | Documento vivo en OneDrive que se actualiza cada cierre. |
 
 Si lo que quieres es *«escribo mis párrafos y las cifras se actualizan
-solas»*, la segunda. Sigue en [Documento base vivo](#documento-base-vivo).
+solas»*, la segunda. La guía de operación completa está en
+**[`GUIA.md`](GUIA.md)**; el resumen, en [Documento base vivo](#documento-base-vivo).
 
 ---
 
@@ -184,9 +185,26 @@ Para volver atrás: `python fs_documento.py desproteger "MI_DOCUMENTO.docx"`.
 | `refrescar` | Actualiza las regiones de datos desde el Excel. |
 | `insertar` | Coloca una cifra viva en una zona de prosa. |
 | `catalogo` | Lista las claves disponibles en el Excel. |
+| `nombrar` | Crea los rangos con nombre en el Excel (identidad estable). |
 | `verificar` | Revisa el documento: anclas huérfanas, regiones vacías. |
 | `plantilla` | Genera un documento base nuevo desde cero. |
 | `proteger` / `desproteger` | Modo estricto de dos editores. |
+
+### Fija las cifras con rangos con nombre
+
+Por defecto, una cifra de la prosa se identifica por el **texto de la
+etiqueta** de su fila. Si alguien renombra «Total assets» en el Excel, el
+vínculo se rompe (se reporta como huérfano, no se rellena mal).
+
+Para que aguante renombrados, reordenaciones e inserciones de filas:
+
+```bash
+python fs_documento.py nombrar "MI_LIBRO.xlsx" --aplicar
+```
+
+Crea un nombre de Excel `fs_<clave>` por cada fila. **Cierra el libro en
+Excel antes.** Los nombres los escribe Excel, no openpyxl, así que las
+fórmulas y sus valores cacheados quedan intactos.
 
 ### Antes de refrescar
 
@@ -202,6 +220,7 @@ El `.exe` se genera desde `generador_fs.py` (Python). Para trabajar el código:
 
 | Documento | Contenido |
 |---|---|
+| [`GUIA.md`](GUIA.md) | **Guía de operación paso a paso** del documento base vivo. Empieza por aquí. |
 | [`CONTRATO.md`](CONTRATO.md) | Contrato de anclas Excel⇄Word. Lo comparten el motor de Python y el add-in. |
 | [`INSTALACION.md`](INSTALACION.md) | Montar Python portable en `.\python\` sin permisos de administrador. |
 | [`PRUEBA_EXTERNA.md`](PRUEBA_EXTERNA.md) | Reproducir la prueba en otro equipo (con el `.exe` o clonando). |

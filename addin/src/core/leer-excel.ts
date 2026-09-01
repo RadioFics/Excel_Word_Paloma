@@ -23,6 +23,8 @@ export interface Ajustes {
   marcadoresExcluir: string[];
   maxFilasScan: number;
   maxColsScan: number;
+  /** Prefijo de los nombres de Excel que dan identidad estable a una fila. */
+  prefijoRangos: string;
 }
 
 export const AJUSTES_DEFECTO: Ajustes = {
@@ -42,6 +44,7 @@ export const AJUSTES_DEFECTO: Ajustes = {
   marcadoresExcluir: ["control check", "check", "cuadre", "balance check"],
   maxFilasScan: 400,
   maxColsScan: 16,
+  prefijoRangos: "fs_",
 };
 
 const TIPOS_VALIDOS = new Set<Tipo>(["H", "I", "S", "T", "N"]);
@@ -247,6 +250,47 @@ function detectarRegion(
   return [primera, ultima];
 }
 
+/**
+ * Lee los nombres de Excel `fs_*` que apuntan a la hoja dada y devuelve
+ * {fila -> clave}. Un nombre sobrevive a que se renombre la etiqueta de la
+ * fila y a que se inserten filas encima, así que da una identidad mucho más
+ * firme que el texto. Ver CONTRATO.md §4.
+ */
+function leerRangosConNombre(
+  wb: ExcelJS.Workbook,
+  hoja: string,
+  prefijo: string
+): Map<number, string> {
+  const porFila = new Map<number, string>();
+  if (!prefijo) return porFila;
+
+  // exceljs expone los nombres definidos como [{ name, ranges: ["Hoja!$A$16"] }]
+  const modelo: Array<{ name: string; ranges: string[] }> =
+    (wb as any).definedNames?.model ?? [];
+
+  for (const dn of modelo) {
+    if (!dn?.name || !dn.name.toLowerCase().startsWith(prefijo.toLowerCase())) continue;
+    const clave = dn.name.slice(prefijo.length).trim().toLowerCase();
+    if (!clave) continue;
+
+    for (const rango of dn.ranges ?? []) {
+      // "'Mi Hoja'!$A$16"  |  "FS!$A$16:$G$16"
+      const corte = rango.lastIndexOf("!");
+      if (corte < 0) continue;
+      const nombreHoja = rango.slice(0, corte).replace(/^'|'$/g, "").replace(/''/g, "'");
+      if (nombreHoja !== hoja) continue;
+
+      const celda = rango.slice(corte + 1).split(":")[0].replace(/\$/g, "");
+      const m = /^[A-Za-z]+(\d+)$/.exec(celda);
+      if (!m) continue;
+      const fila = parseInt(m[1], 10);
+      if (fila > 0 && !porFila.has(fila)) porFila.set(fila, clave);
+      break;
+    }
+  }
+  return porFila;
+}
+
 export async function leerContexto(buf: ArrayBuffer, aj: Ajustes = AJUSTES_DEFECTO): Promise<Contexto> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buf);
@@ -270,6 +314,8 @@ export async function leerContexto(buf: ArrayBuffer, aj: Ajustes = AJUSTES_DEFEC
     for (let r = 1; r < Math.max(primera, 2); r++) if (esTextoNoVacio(g.valores[r][c])) return g.valores[r][c] as string;
     return "";
   };
+
+  const rangos = leerRangosConNombre(wb, ws.name, aj.prefijoRangos);
 
   const lineas: Linea[] = [];
   let nDeclarados = 0;
@@ -318,6 +364,8 @@ export async function leerContexto(buf: ArrayBuffer, aj: Ajustes = AJUSTES_DEFEC
       // sin formatear: los necesita contrato.ts para var_abs / var_pct
       actualRaw: ca ? vals[ca] : null,
       previoRaw: cp ? vals[cp] : null,
+      clave: rangos.get(r),
+      claveOrigen: rangos.has(r) ? "rango" : "etiqueta",
       origen,
       senal,
     });

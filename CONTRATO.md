@@ -84,10 +84,48 @@ Los ocho nombres válidos, tal como salen del Excel:
 Este es el mecanismo para escribir *"los activos totales ascendieron a
 **119,066,301**"* y que esa cifra siga al Excel sin que nadie la retipee.
 
-### La clave
+### La clave — dos orígenes
 
-Se deriva de la **etiqueta de la fila** del Excel, con un algoritmo que debe
-dar idéntico resultado en Python y en TypeScript:
+Una cifra de la prosa se identifica por una **clave**. Hay dos maneras de
+obtenerla, y no son igual de firmes:
+
+| Origen | Cómo | Aguanta |
+|---|---|---|
+| **`rango`** *(recomendado)* | un nombre de Excel `fs_<clave>` que apunta a la celda de etiqueta de esa fila | renombrar la fila, insertar/borrar filas encima, reordenar |
+| `etiqueta` *(respaldo)* | se deriva del texto de la etiqueta | **se rompe si alguien renombra la fila** |
+
+El motor prefiere siempre el rango; si la fila no tiene nombre, cae en la
+etiqueta. `catalogo` muestra el origen de cada clave.
+
+#### Crear los rangos
+
+```bash
+python fs_documento.py nombrar <libro.xlsx>            # simulación
+python fs_documento.py nombrar <libro.xlsx> --aplicar  # los escribe
+```
+
+Crea un nombre `fs_<clave>` por cada línea con etiqueta, apuntando a su
+celda de etiqueta. A partir de ahí, esa fila tiene identidad propia.
+
+> **Por qué con Excel y no con openpyxl.** openpyxl no recalcula fórmulas y
+> al reguardar descarta el valor cacheado de **todas** ellas: el Word saldría
+> con las cifras en blanco. La orden pilota Excel (vía PowerShell) para que
+> sea Excel quien guarde el libro. Cierre el libro antes de ejecutarla.
+
+También puede crearlos a mano: en Excel, seleccione la celda de la etiqueta
+y escriba `fs_lo_que_sea` en el **Cuadro de nombres** (arriba a la izquierda).
+
+#### Escalares fuera de la tabla
+
+Un nombre `fs_*` que apunte **fuera** de la región de datos (una fecha de
+corte, un tipo de cambio, un dato de otra hoja) se expone igual, con el campo
+`actual`. Sirve para intercalar en la redacción cifras que no son filas del
+estado.
+
+### La clave derivada de la etiqueta
+
+Cuando no hay rango, se deriva del texto con un algoritmo que debe dar
+idéntico resultado en Python y en TypeScript:
 
 1. quitar tildes (NFKD, descartando diacríticos)
 2. minúsculas
@@ -234,10 +272,14 @@ El add-in del Editor de datos hace: **desproteger → refrescar → reproteger**
 
 - Dos etiquetas distintas del Excel que produzcan la misma clave colisionan.
   El motor conserva la primera y **lo reporta**; no lo resuelve solo.
-- El vínculo cifra↔prosa se apoya hoy en la etiqueta de la fila. Si alguien
-  renombra «Total assets» en el Excel, la clave cambia y el ancla queda
-  huérfana. La solución de fondo es usar **rangos con nombre de Excel** como
-  identidad estable; el motor ya está preparado para recibirlos.
+- Las filas **sin rango con nombre** siguen dependiendo del texto de la
+  etiqueta. Corra `nombrar --aplicar` para fijarlas; `catalogo` dice cuáles
+  faltan.
+- Las filas de **subtotal (S) no reciben nombre**: no tienen etiqueta donde
+  anclarlo. Se identifican por su sección (*«Subtotal de Current assets»*).
+- Si alguien **borra** una fila con nombre en Excel, el nombre queda en
+  `#REF!` y el motor lo ignora: el ancla del Word sale reportada como
+  huérfana, que es el aviso correcto.
 - La co-autoría de Word en el navegador maneja mal los controles de
   contenido. **El refresco debe correrse desde Word de escritorio o desde la
   línea de órdenes, con el archivo cerrado por los demás.**
