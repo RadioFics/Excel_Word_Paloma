@@ -61,7 +61,7 @@ python src\fs_documento.py nombrar "MI_LIBRO.xlsx" --aplicar
 ### 2. Preparar el documento base · *una vez*
 
 Le añade al documento las regiones que le falten: la tabla, los campos de
-encabezado, las zonas de redacción, la bitácora. **No borra nada**, así que
+encabezado y las zonas de redacción. **No borra nada**, así que
 puedes correrlo sobre un documento con meses de trabajo encima.
 
 ```bash
@@ -127,7 +127,9 @@ Qué hace, exactamente:
 
 - Reescribe la tabla del estado con las cifras nuevas.
 - Actualiza los campos de encabezado y las cifras de la redacción.
-- Añade a la bitácora del documento qué cambió, cifra por cifra.
+- Anota qué cambió, cifra por cifra, en un **.log aparte**
+  (`salidas\bitacora_<documento>.log`). **No escribe nada de esto dentro
+  del Word**: el documento queda limpio para redactar.
 - Deja una copia `.bak` del documento anterior.
 - Avisa si alguna cifra de tu texto ya no existe en el Excel.
 
@@ -169,7 +171,7 @@ bloqueadas una por una, pero el documento en sí no lleva contraseña.
 | Campos de encabezado | `fs-campo-*` | Bloqueados | Sí |
 | Cifras dentro del texto | `fs-dato-*` | Bloqueadas | Sí |
 | Zonas de redacción | `fs-prosa-*` | **Libres** | Nunca |
-| Bitácora | `fs-registro` | Bloqueada | Añade encima |
+| Bitácora | *(fuera del documento)* | — | va al `.log` de `salidas\` |
 | Texto suelto | *sin etiqueta* | **Libre** | Nunca |
 
 ### Los dos editores, cuando se quiera activar
@@ -228,8 +230,9 @@ conviene decidir antes quién custodia la clave. Se quita con `desproteger`.
 | 1 | Motor de refresco en el sitio | ✅ Hecho |
 | 2 | Identidad estable por rangos con nombre | ✅ Hecho |
 | 3 | Modo estricto de dos editores | ⏸ Listo, sin activar |
-| 4 | Complemento de Word | ○ Pendiente |
-| 5 | Pruebas de archivo dorado en CI | ○ Pendiente |
+| 4 | Ejecutables (`EstadosFinancieros`, `GeneradorFS`, `RefrescarFS`) | ✅ Hecho |
+| 5 | Complemento de Word | ○ Pendiente |
+| 6 | Pruebas de archivo dorado en CI | ○ Pendiente |
 
 **Lo siguiente, en orden:**
 

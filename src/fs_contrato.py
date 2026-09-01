@@ -187,8 +187,11 @@ def construir_valores(ctx):
 
     # Escalares de rangos con nombre que caen fuera de la tabla (una fecha
     # de corte, un tipo de cambio…). Se exponen solo con el campo 'actual'.
-    for k, v in (ctx.get("escalares") or {}).items():
-        valores[tag_dato(k, "actual")] = _num_contable(v)
+    # El escalar llega ya formateado por generador_fs.formatear_valor(),
+    # que respeta el formato de la celda en Excel (decimales, %, fechas).
+    for k, par in (ctx.get("escalares") or {}).items():
+        texto_, crudo_ = par if isinstance(par, (tuple, list)) else (par, None)
+        valores[tag_dato(k, "actual")] = "" if texto_ is None else str(texto_)
         for campo in ("previo", "nota", "var_abs", "var_pct"):
             valores.setdefault(tag_dato(k, campo), "")
 
@@ -240,9 +243,11 @@ def catalogo(ctx):
             linea.get("actual", ""),
             linea.get("previo", ""),
         ))
-    for k, v in sorted((ctx.get("escalares") or {}).items()):
+    for k, par in sorted((ctx.get("escalares") or {}).items()):
         if k in vistas:
             continue
         vistas.add(k)
-        filas.append((k, "rango", "(escalar fuera de la tabla)", _num_contable(v), ""))
+        texto_ = par[0] if isinstance(par, (tuple, list)) else par
+        filas.append((k, "rango", "(celda suelta del libro)",
+                      "" if texto_ is None else str(texto_), ""))
     return filas

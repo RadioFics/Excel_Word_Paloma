@@ -21,7 +21,8 @@ $zip   = Join-Path $dist "GeneradorFS_portable_$stamp.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
 $incluir = @(
-    'generar.bat', 'refrescar.bat', 'config.json', 'requirements.txt',
+    'generar.bat', 'refrescar.bat', 'estados_financieros.bat',
+    'config.json', 'requirements.txt',
     'README.md',
     'src', 'docs', 'plantillas', 'ejemplos',
     'python', 'tools'

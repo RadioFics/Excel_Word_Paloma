@@ -213,9 +213,12 @@ modo abierto la persona puede escribir en cualquier parte del documento.
 
 ## 7. Bitácora y metadatos
 
-- `fs-registro` — el motor **antepone** un bloque por cada refresco con la
-  fecha, el Excel de origen y las diferencias contra la corrida anterior.
-  No borra lo anterior.
+- `fs-registro` — **solo si `config.json` -> `bitacora` lo pide**
+  (`"documento"` o `"ambos"`). Por defecto el histórico va a un `.log`
+  aparte y esta región ni se crea: una bitácora creciendo dentro del
+  documento estorba a quien redacta y multiplica los conflictos de
+  sincronización en OneDrive. Para retirarla de un documento que ya la
+  tenga: `fs_documento.py limpiar-bitacora <doc.docx>`.
 - `fs-meta` — párrafo **oculto** con un JSON: la foto de las cifras de la
   última corrida. Es lo que permite calcular el «antes → después». Viaja
   dentro del `.docx`, así que funciona igual en OneDrive y entre equipos.

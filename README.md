@@ -3,13 +3,15 @@
 Convierte la hoja del **Estado de Situación Financiera** de tu Excel en un
 documento de **Word** con el formato de la plantilla ya aplicado.
 
-Hay **dos caminos**, y hacen cosas distintas. Arrastrar el Excel funciona en
+Hay **dos caminos**, y hacen cosas distintas. Si no sabe cuál, use el
+tercero: pregunta antes de hacer nada. Arrastrar el Excel funciona en
 los dos; lo que cambia es el resultado.
 
 | Arrastra tu Excel sobre… | Qué hace | Tu redacción |
 |---|---|---|
 | **`generar.bat`** · `GeneradorFS.exe` | Crea un Word **nuevo** en `salidas\` | Se pierde en cada corrida |
 | **`refrescar.bat`** · `RefrescarFS.exe` | **Actualiza** el documento base de OneDrive | **Se conserva** |
+| **`estados_financieros.bat`** · `EstadosFinancieros.exe` | **Pregunta cuál de los dos** antes de hacer nada | según elija |
 
 Si lo que quieres es *«escribo mis párrafos y las cifras se actualizan
 solas»*, el segundo. La guía de operación completa está en
@@ -21,6 +23,7 @@ solas»*, el segundo. La guía de operación completa está en
 ```
 generar.bat        crea un Word nuevo          config.json   ajustes
 refrescar.bat      actualiza el documento base requirements.txt
+estados_financieros.bat   pregunta cual de los dos
 
 src/          codigo Python (motor y ordenes)
 docs/         documentacion
@@ -39,20 +42,77 @@ uno de ejemplo a `ejemplos/`, y la documentación a `docs/`.
 
 ## Descargar y usar
 
-**Un solo archivo. No hay que instalar nada.** (Windows, ~13 MB)
+**Un solo archivo. No hay que instalar nada.** (Windows 64 bits, ~13 MB)
 
-### ⬇ [Descargar GeneradorFS.exe](https://github.com/RadioFics/Excel_Word_Paloma/releases/latest/download/GeneradorFS.exe)
+### ⬇ [Descargar EstadosFinancieros.exe](https://github.com/RadioFics/Excel_Word_Paloma/releases/latest/download/EstadosFinancieros.exe)
 
-Luego:
+**Arrastra tu Excel encima** (o haz doble clic) y te pregunta qué hacer:
 
-1. **Arrastra tu archivo de Excel encima de `GeneradorFS.exe`.**
-   (O deja el Excel en la misma carpeta que el `.exe` y haz doble clic en el `.exe`.)
-2. Se abre una ventana, trabaja unos segundos y muestra
-   **DOCUMENTO GENERADO CORRECTAMENTE**. Pulsa Enter para cerrarla.
-3. El Word queda en una carpeta **`salidas`**, junto al `.exe`.
+```
+   1)  ACTUALIZAR el documento de siempre
+       Conserva todo lo que hayas escrito. Solo cambia las cifras.
+
+   2)  CREAR un documento nuevo
+       Sale de la plantilla, en la carpeta salidas\.
+
+   3)  VER el estado del proyecto
+```
 
 Eso es todo. No se instala Python, no se descomprime nada, no hace falta
 permiso de administrador.
+
+### Configurarlo (solo para la opción 1)
+
+Para que sepa **qué documento** actualizar, deja un `config.json` **junto al
+`.exe`** con al menos esta clave:
+
+```json
+{
+  "documento_base": "C:\\Users\\tu.usuario\\OneDrive - Collective Mining C-Suite\\MI_DOCUMENTO.docx"
+}
+```
+
+Las barras van dobladas (`\\`), que es como JSON escribe las rutas de
+Windows. Sin esta clave, las opciones 2 y 3 funcionan igual; la 1 te dirá que
+falta configurarla.
+
+La primera vez que uses un documento, prepáralo:
+
+```
+EstadosFinancieros.exe MI_LIBRO.xlsx --refrescar --preparar
+```
+
+Todas las claves de `config.json` están en la tabla de
+[Ajustes opcionales](#ajustes-opcionales-configjson).
+
+### Los tres ejecutables
+
+`EstadosFinancieros.exe` reúne los dos caminos, pero **cada uno sigue
+existiendo por separado** si prefieres un icono por tarea:
+
+| Ejecutable | Qué hace | SHA-256 |
+|---|---|---|
+| **`EstadosFinancieros.exe`** | Pregunta cuál de los dos | `56835BD4883ADDBEF001F0156BBB1A69DEFC89770E867C9CD1351272AB57F2B7` |
+| `GeneradorFS.exe` | Word **nuevo** en `salidas\` | `EFE41A8A5FFDFB4F5A262530EB8267E49CC49F2FF959940C2AD98EA099E438B1` |
+| `RefrescarFS.exe` | **Actualiza** el documento base | `4AA1AFEB2049EDA6F67C2688A3D1CDBF1D54E7F21F860FAB0ABB27AA37D9D4DD` |
+
+Los tres admiten que se les arrastre el Excel. Comprueba que descargaste el
+archivo legítimo con:
+
+```
+powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 '.\EstadosFinancieros.exe').Hash"
+```
+
+Las huellas cambian en cada recompilación: usa siempre las que acompañen a la
+descarga.
+
+### Sin menú, para automatizar
+
+```
+EstadosFinancieros.exe MI_LIBRO.xlsx --refrescar
+EstadosFinancieros.exe MI_LIBRO.xlsx --generar
+EstadosFinancieros.exe --estado
+```
 
 ### La primera vez, Windows puede advertir
 
@@ -62,8 +122,6 @@ Si aparece la pantalla azul **«Windows protegió su PC»**:
 Es lo normal con cualquier programa recién descargado que todavía no tiene
 firma digital. Abajo se explica qué contiene y cómo comprobar que es el
 archivo legítimo.
-
----
 
 ## Qué obtienes
 
@@ -105,15 +163,7 @@ sin mirar su contenido.
 - **Qué NO hace:** no se instala, no toca la configuración de Windows, no se
   inicia solo, **no se conecta a internet**, no envía datos a ningún lado.
 - **Cómo verificar que es el archivo correcto:** compara su huella SHA-256
-  con la que se publica junto a la descarga:
-  ```
-  powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 '.\GeneradorFS.exe').Hash"
-  ```
-  Huella de la versión actual:
-  ```
-  61C57FFE7AE31A6C4A864E26CD6F0B56E7F831224B5F2DD63D893AE7465145E6
-  ```
-  (Cambia cada vez que se recompila; usa siempre la que acompañe a la descarga.)
+  con la tabla de [Los tres ejecutables](#los-tres-ejecutables).
 - **Origen:** repositorio `RadioFics/Excel_Word_Paloma`.
 
 Si tu equipo lo **bloquea por completo** (política corporativa / antivirus
@@ -257,6 +307,8 @@ El `.exe` se genera desde `src\generador_fs.py` (Python). Para trabajar el códi
 |---|---|
 | [`docs/GUIA.md`](docs/GUIA.md) | **Guía de operación paso a paso** del documento base vivo. Empieza por aquí. |
 | [`docs/CONTRATO.md`](docs/CONTRATO.md) | Contrato de anclas Excel⇄Word. Lo comparten el motor de Python y el add-in. |
+| [`docs/DATOS.md`](docs/DATOS.md) | **Dónde se editan las cifras** y por qué el Word está bloqueado. |
+| [`docs/CAMBIAR_EXCEL.md`](docs/CAMBIAR_EXCEL.md) | Qué revisar **cuando llegue el Excel definitivo**. |
 | [`docs/ESTRUCTURA.md`](docs/ESTRUCTURA.md) | Cómo están organizadas las carpetas y qué rutas dependen de ello. |
 | [`docs/DESPLIEGUE_ADDIN.md`](docs/DESPLIEGUE_ADDIN.md) | Subir el complemento de Word y qué pedirle a TI. |
 | [`docs/INSTALACION.md`](docs/INSTALACION.md) | Montar Python portable en `.\python\` sin permisos de administrador. |
@@ -286,6 +338,10 @@ recompilar, deja un `config.json` propio en la misma carpeta que el `.exe`:
 | `primera_fila` | Un número fija la fila de inicio; `"auto"` la detecta. |
 | `columnas` | Letras (`A`, `C`, `E`, `F`, `G`) para forzar una columna; `null` = detectar. |
 | `marcadores_excluir` | Etiquetas que marcan una fila de control/cuadre. |
+| `documento_base` | **El .docx que actualiza la opción 1.** Ruta absoluta, o relativa a la carpeta del `.exe`. |
+| `prefijo_rangos` | Prefijo de los nombres de Excel que fijan la identidad de cada cifra (`fs_`). |
+| `bitacora` | Dónde se anota el histórico: `"archivo"` (por defecto), `"documento"`, `"ambos"` o `"no"`. |
+| `bitacora_archivo` | Ruta del `.log`. Vacío = `salidas\bitacora_<documento>.log`. |
 
 ### Cómo clasifica cada fila
 

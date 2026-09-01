@@ -43,6 +43,7 @@ def _pausa():
 
 
 def ejecutar(argv):
+    D.preparar_consola()
     args = [a for a in argv[1:] if not a.startswith("--")]
     flags = {a.lower() for a in argv[1:] if a.startswith("--")}
 
@@ -71,12 +72,12 @@ def ejecutar(argv):
 
     if "--preparar" in flags:
         print()
-        print("Preparando el documento (solo añade lo que falte)…")
-        D.construir(documento, ctx)
+        print(D.imprimible("Preparando el documento (solo añade lo que falte)…"))
+        D.construir(documento, ctx, cfg_bitacora=cfg)
 
     D._respaldar(documento)
     sha = hashlib.sha256(xlsx.read_bytes()).hexdigest()[:12]
-    inf = D.refrescar(documento, ctx, origen=f"{xlsx.name} (sha {sha})")
+    inf = D.refrescar(documento, ctx, origen=f"{xlsx.name} (sha {sha})", cfg=cfg)
 
     total_filas = sum(n for _, n in inf["tablas"])
     print()
@@ -106,11 +107,14 @@ def ejecutar(argv):
             print(f"   ? {t}")
 
     print()
+    if inf.get("bitacora_archivo"):
+        print(f" Bitácora:       {inf['bitacora_archivo']}")
+    print()
     print(" Cambios respecto de la última actualización:")
     for c in inf["cambios"][:20]:
-        print(f"   • {c}")
+        print(D.imprimible(f"   • {c}"))
     if len(inf["cambios"]) > 20:
-        print(f"   • … y {len(inf['cambios']) - 20} más (están en la bitácora del documento).")
+        print(D.imprimible(f"   • … y {len(inf['cambios']) - 20} más (están en la bitácora del documento)."))
     print("=" * 68)
 
 

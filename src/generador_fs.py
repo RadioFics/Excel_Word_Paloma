@@ -128,6 +128,13 @@ DEFAULTS = {
     # indicar el documento a mano en cada orden. Solo lo usa fs_documento.py
     # / RefrescarFS.exe; el generador clásico lo ignora.
     "documento_base": "",
+    # Dónde se anota el histórico de actualizaciones:
+    #   "archivo"   -> un .log aparte (por defecto; deja el Word limpio)
+    #   "documento" -> dentro del propio .docx, región fs-registro
+    #   "ambos" / "no"
+    "bitacora": "archivo",
+    # Ruta del .log. Vacío = salidas\bitacora_<documento>.log
+    "bitacora_archivo": "",
 }
 
 
@@ -542,13 +549,73 @@ def escribir_revision(revision):
 # --------------------------------------------------------------------------- #
 #  Rangos con nombre — la identidad estable de cada línea
 # --------------------------------------------------------------------------- #
+def _decimales_de(formato):
+    """Cuántos decimales pide un formato numérico de Excel ('0.00' -> 2)."""
+    m = re.search(r"[0#]\.([0#]+)", str(formato or ""))
+    return len(m.group(1)) if m else None
+
+
+def formatear_valor(valor, formato=None):
+    """Da formato a una celda suelta RESPETANDO el formato del propio Excel.
+
+    Es distinto de num(): num() es para las cifras de la tabla del estado,
+    siempre en miles y sin decimales. Aquí entran ratios, tipos de cambio,
+    porcentajes y fechas, donde los decimales importan. Si el usuario puso
+    '0.00' en Excel, aquí salen dos decimales; si puso '0.0%', sale con el
+    signo de porcentaje.
+    """
+    if valor is None:
+        return ""
+    if isinstance(valor, bool):
+        return "Sí" if valor else "No"
+    if isinstance(valor, str):
+        return valor.strip()
+    if hasattr(valor, "strftime"):
+        return valor.strftime("%Y-%m-%d")
+    if not isinstance(valor, (int, float)):
+        return str(valor)
+
+    fmt = str(formato or "")
+    dec = _decimales_de(fmt)
+    if "%" in fmt:
+        return f"{valor * 100:,.{dec if dec is not None else 1}f}%"
+    if dec is None:
+        dec = 0 if float(valor).is_integer() else 2
+    if valor < 0:
+        return f"({abs(valor):,.{dec}f})"
+    return f"{valor:,.{dec}f}"
+
+
+def _leer_celda(wb, hoja, fila, columna):
+    """Lee UNA celda de cualquier hoja. En modo read_only no hay acceso
+    aleatorio con ws.cell(), así que se pide esa fila con iter_rows."""
+    try:
+        ws = wb[hoja]
+    except KeyError:
+        return None, None
+    try:
+        for fila_celdas in ws.iter_rows(min_row=fila, max_row=fila,
+                                        min_col=columna, max_col=columna):
+            for celda in fila_celdas:
+                return celda.value, getattr(celda, "number_format", None)
+    except Exception:
+        return None, None
+    return None, None
+
+
 def leer_rangos_con_nombre(wb, hoja_titulo, cfg):
-    """Devuelve {fila: clave} y {clave: (fila, columna)} de los nombres
-    'fs_*' que apuntan a la hoja elegida.
+    """Recorre los nombres 'fs_*' del libro ENTERO.
+
+    Devuelve (por_fila, escalares):
+      por_fila   {fila: clave}  para los nombres que caen en la hoja del
+                 estado; sirven para dar identidad estable a esas líneas.
+      escalares  {clave: (texto_formateado, valor_crudo)}  para todo lo
+                 demás: una celda de otra hoja, un ratio, un tipo de
+                 cambio, una fecha de corte. Es la vía para llevar al Word
+                 cifras que NO son filas de la tabla.
 
     Un nombre de Excel sobrevive a que se renombre la etiqueta de la fila y
-    a que se inserten filas encima (Excel reajusta la referencia solo). Por
-    eso es una identidad mucho más firme que el texto de la etiqueta.
+    a que se inserten filas encima: Excel reajusta la referencia solo.
 
     Solo LEE. Nunca reguardamos el libro con openpyxl: descartaría el valor
     cacheado de todas las fórmulas. Para crear nombres, use la orden
@@ -558,7 +625,7 @@ def leer_rangos_con_nombre(wb, hoja_titulo, cfg):
     if not prefijo:
         return {}, {}
 
-    por_fila, por_clave = {}, {}
+    por_fila, escalares = {}, {}
     try:
         items = list(wb.defined_names.items())
     except AttributeError:                       # openpyxl < 3.1
@@ -574,22 +641,22 @@ def leer_rangos_con_nombre(wb, hoja_titulo, cfg):
             destinos = list(dn.destinations)
         except Exception:
             continue                              # #REF! y otros nombres rotos
+
         for hoja, coord in destinos:
-            if hoja != hoja_titulo:
-                continue
             try:
-                celdas = range_boundaries(coord.replace("$", ""))
+                min_col, min_fila, _, _ = range_boundaries(coord.replace("$", ""))
             except Exception:
                 continue
-            min_col, min_fila, _, _ = celdas
             if min_fila is None or min_col is None:
                 continue
-            por_clave[clave] = (min_fila, min_col)
-            por_fila.setdefault(min_fila, clave)
+            if hoja == hoja_titulo:
+                # Puede ser una línea del estado; se decide más tarde, al
+                # saber qué filas entraron en la región de datos.
+                por_fila.setdefault(min_fila, clave)
+            valor, formato = _leer_celda(wb, hoja, min_fila, min_col)
+            escalares[clave] = (formatear_valor(valor, formato), valor)
             break
-    return por_fila, por_clave
-
-
+    return por_fila, escalares
 # --------------------------------------------------------------------------- #
 #  Orquestador de lectura
 # --------------------------------------------------------------------------- #
@@ -619,28 +686,26 @@ def leer_contexto(ruta_xlsx, cfg):
         # Identidad estable por rango con nombre. La línea que tenga un
         # nombre 'fs_*' apuntando a su fila lleva esa clave; el resto cae
         # en la clave derivada de la etiqueta (frágil ante renombrados).
-        rangos_por_fila, rangos_por_clave = leer_rangos_con_nombre(
+        rangos_por_fila, escalares_libro = leer_rangos_con_nombre(
             wb, hoja_titulo, cfg)
         n_con_rango = 0
+        claves_de_lineas = set()
         for linea in lineas:
             clave_rango = rangos_por_fila.get(linea.get("fila"))
             if clave_rango:
                 linea["clave"] = clave_rango
                 linea["clave_origen"] = "rango"
+                claves_de_lineas.add(clave_rango)
                 n_con_rango += 1
             else:
                 linea["clave_origen"] = "etiqueta"
 
-        # Nombres que apuntan fuera de la región de datos: escalares sueltos
-        # (una fecha de corte, un tipo de cambio…). Se exponen con el campo
-        # 'actual' para poder intercalarlos en la redacción igual que una cifra.
-        escalares = {}
-        filas_de_lineas = {l.get("fila") for l in lineas}
-        for clave, (fila, columna) in rangos_por_clave.items():
-            if fila in filas_de_lineas:
-                continue
-            if 0 < fila < len(valores) and 0 < columna <= cfg["max_cols_scan"]:
-                escalares[clave] = valores[fila][columna]
+        # Lo que no es una fila del estado queda como escalar suelto: una
+        # celda de otra hoja, un ratio, un tipo de cambio, una fecha de
+        # corte. Se expone con el campo 'actual' para poder intercalarlo en
+        # la redacción igual que cualquier cifra de la tabla.
+        escalares = {k: v for k, v in escalares_libro.items()
+                     if k not in claves_de_lineas}
     finally:
         wb.close()
 
