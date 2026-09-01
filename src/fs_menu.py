@@ -68,93 +68,224 @@ def _describir_destino():
 #: Si algo falla, se cae al menú de consola de siempre.
 _PS_VENTANA = r"""
 $ErrorActionPreference = 'Stop'
+
+# --- Nitidez en pantallas de alta densidad -------------------------------
+# Sin esto, Windows dibuja la ventana a 96 ppp y la escala como una imagen:
+# el texto sale borroso ("pixelado"). Hay que declararlo ANTES de crear
+# ninguna ventana.
+$codigo = @"
+using System;
+using System.Runtime.InteropServices;
+public static class Ppp {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern int SetProcessDpiAwarenessContext(IntPtr v);
+}
+"@
+try { Add-Type -TypeDefinition $codigo -ErrorAction Stop } catch {}
+try   { [void][Ppp]::SetProcessDpiAwarenessContext([IntPtr](-4)) }   # por monitor v2
+catch { try { [void][Ppp]::SetProcessDPIAware() } catch {} }
+
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $documento = if ($args.Count -ge 1) { $args[0] } else { '' }
+$captura   = if ($args.Count -ge 2) { $args[1] } else { '' }
 
+# escala real de la pantalla
+$g = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+$k = $g.DpiX / 96.0
+$g.Dispose()
+function S($n) { [int][Math]::Round($n * $k) }
+
+# --- Paleta --------------------------------------------------------------
 $tinta   = [System.Drawing.Color]::FromArgb(26, 34, 38)
-$suave   = [System.Drawing.Color]::FromArgb(88, 101, 107)
-$fondo   = [System.Drawing.Color]::FromArgb(250, 249, 246)
-$acento  = [System.Drawing.Color]::FromArgb(20, 92, 88)
-$aviso   = [System.Drawing.Color]::FromArgb(138, 90, 18)
+$suave   = [System.Drawing.Color]::FromArgb(102, 114, 120)
+$fondo   = [System.Drawing.Color]::FromArgb(247, 246, 243)
+$tarjeta = [System.Drawing.Color]::White
+$borde   = [System.Drawing.Color]::FromArgb(224, 221, 214)
+$acento  = [System.Drawing.Color]::FromArgb(17, 94, 89)
+$ambar   = [System.Drawing.Color]::FromArgb(146, 94, 20)
+
+# Segoe MDL2 Assets trae los iconos de Windows como tipografia: son
+# vectoriales, se ven nitidos a cualquier escala y no hay que empaquetar
+# ningun archivo. Si no estuviera, se cae a texto sin icono.
+$hayIconos = $false
+try {
+  $fam = New-Object System.Drawing.FontFamily('Segoe MDL2 Assets')
+  $hayIconos = $true
+  $fam.Dispose()
+} catch { $hayIconos = $false }
+
+$fTitulo  = New-Object System.Drawing.Font('Segoe UI Semibold', 18, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+$fSub     = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+$fOpcion  = New-Object System.Drawing.Font('Segoe UI Semibold', 11.5, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+$fDetalle = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+$fIcono   = if ($hayIconos) { New-Object System.Drawing.Font('Segoe MDL2 Assets', 15, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point) } else { $fOpcion }
+$fInfo    = if ($hayIconos) { New-Object System.Drawing.Font('Segoe MDL2 Assets', 11, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point) } else { $fDetalle }
 
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'Estados Financieros'
-$f.Size = New-Object System.Drawing.Size(620, 560)
+$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 580))
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = $fondo
-$f.FormBorderStyle = 'FixedDialog'
+$f.FormBorderStyle = 'FixedSingle'
 $f.MaximizeBox = $false
+$f.ShowIcon = $false
+$f.Font = $fSub
 
-$titulo = New-Object System.Windows.Forms.Label
-$titulo.Text = 'Estados Financieros'
-$titulo.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 17)
-$titulo.ForeColor = $tinta
-$titulo.Location = New-Object System.Drawing.Point(28, 22)
-$titulo.Size = New-Object System.Drawing.Size(560, 34)
-$f.Controls.Add($titulo)
+$pistas = New-Object System.Windows.Forms.ToolTip
+$pistas.InitialDelay = 200
+$pistas.ReshowDelay = 100
+$pistas.AutoPopDelay = 20000
 
-$sub = New-Object System.Windows.Forms.Label
-$sub.Text = if ($documento) { "Documento: $documento" } else { 'Sin documento configurado (use "Cambiar documento")' }
-$sub.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-$sub.ForeColor = $suave
-$sub.Location = New-Object System.Drawing.Point(30, 58)
-$sub.Size = New-Object System.Drawing.Size(560, 20)
-$f.Controls.Add($sub)
+$lTitulo = New-Object System.Windows.Forms.Label
+$lTitulo.Text = 'Estados Financieros'
+$lTitulo.Font = $fTitulo
+$lTitulo.ForeColor = $tinta
+$lTitulo.AutoSize = $true
+$lTitulo.Location = New-Object System.Drawing.Point((S 30), (S 24))
+$f.Controls.Add($lTitulo)
+
+$lSub = New-Object System.Windows.Forms.Label
+$lSub.Text = if ($documento) { "Documento: $documento" } else { 'Sin documento configurado — use «Cambiar el documento»' }
+$lSub.Font = $fSub
+$lSub.ForeColor = $suave
+$lSub.AutoEllipsis = $true
+$lSub.Location = New-Object System.Drawing.Point((S 32), (S 66))
+$lSub.Size = New-Object System.Drawing.Size((S 600), (S 22))
+$f.Controls.Add($lSub)
 
 $script:eleccion = '0'
 
-function Nuevo-Boton($texto, $detalle, $y, $valor, $color) {
-  $b = New-Object System.Windows.Forms.Button
-  $b.Text = "  $texto"
-  $b.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 11)
-  $b.ForeColor = $color
-  $b.BackColor = [System.Drawing.Color]::White
-  $b.FlatStyle = 'Flat'
-  $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(222, 219, 211)
-  $b.FlatAppearance.BorderSize = 1
-  $b.TextAlign = 'MiddleLeft'
-  $b.Location = New-Object System.Drawing.Point(28, $y)
-  $b.Size = New-Object System.Drawing.Size(556, 40)
-  $b.Cursor = [System.Windows.Forms.Cursors]::Hand
-  $b.Add_Click({ $script:eleccion = $valor; $f.Close() }.GetNewClosure())
-  $f.Controls.Add($b)
+function Nueva-Opcion($icono, $texto, $detalle, $ayuda, $y, $valor, $color) {
+  $alto = S 62
 
-  $l = New-Object System.Windows.Forms.Label
-  $l.Text = $detalle
-  $l.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
-  $l.ForeColor = $suave
-  $l.Location = New-Object System.Drawing.Point(34, ($y + 42))
-  $l.Size = New-Object System.Drawing.Size(556, 18)
-  $f.Controls.Add($l)
+  $panel = New-Object System.Windows.Forms.Panel
+  $panel.Location = New-Object System.Drawing.Point((S 28), (S $y))
+  $panel.Size = New-Object System.Drawing.Size((S 604), $alto)
+  $panel.BackColor = $tarjeta
+  $panel.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $panel.BorderStyle = 'FixedSingle'
+
+  $lIcono = New-Object System.Windows.Forms.Label
+  $lIcono.Text = $icono
+  $lIcono.Font = $fIcono
+  $lIcono.ForeColor = $color
+  $lIcono.TextAlign = 'MiddleCenter'
+  $lIcono.Location = New-Object System.Drawing.Point((S 14), (S 14))
+  $lIcono.Size = New-Object System.Drawing.Size((S 34), (S 34))
+  $panel.Controls.Add($lIcono)
+
+  $lTexto = New-Object System.Windows.Forms.Label
+  $lTexto.Text = $texto
+  $lTexto.Font = $fOpcion
+  $lTexto.ForeColor = $color
+  $lTexto.AutoSize = $true
+  $lTexto.Location = New-Object System.Drawing.Point((S 56), (S 11))
+  $panel.Controls.Add($lTexto)
+
+  $lDetalle = New-Object System.Windows.Forms.Label
+  $lDetalle.Text = $detalle
+  $lDetalle.Font = $fDetalle
+  $lDetalle.ForeColor = $suave
+  $lDetalle.AutoSize = $true
+  $lDetalle.Location = New-Object System.Drawing.Point((S 57), (S 34))
+  $panel.Controls.Add($lDetalle)
+
+  $lInfo = New-Object System.Windows.Forms.Label
+  $lInfo.Text = if ($hayIconos) { [char]0xE946 } else { '?' }
+  $lInfo.Font = $fInfo
+  $lInfo.ForeColor = $suave
+  $lInfo.TextAlign = 'MiddleCenter'
+  $lInfo.Location = New-Object System.Drawing.Point((S 566), (S 20))
+  $lInfo.Size = New-Object System.Drawing.Size((S 24), (S 24))
+  $lInfo.Cursor = [System.Windows.Forms.Cursors]::Help
+  $pistas.SetToolTip($lInfo, $ayuda)
+  $panel.Controls.Add($lInfo)
+
+  $alClic = { $script:eleccion = $valor; $f.Close() }.GetNewClosure()
+  $entrar = { $panel.BackColor = [System.Drawing.Color]::FromArgb(240, 245, 244) }.GetNewClosure()
+  $salir  = { $panel.BackColor = $tarjeta }.GetNewClosure()
+
+  foreach ($c in @($panel, $lIcono, $lTexto, $lDetalle)) {
+    $c.Add_Click($alClic)
+    $c.Add_MouseEnter($entrar)
+    $c.Add_MouseLeave($salir)
+  }
+  $lInfo.Add_MouseEnter($entrar)
+  $lInfo.Add_MouseLeave($salir)
+
+  $f.Controls.Add($panel)
 }
 
-Nuevo-Boton 'Actualizar el documento de siempre' `
-            'Conserva todo lo que haya escrito. Solo cambia las cifras.' 96  '1' $acento
-Nuevo-Boton 'Crear un documento nuevo' `
-            'Sale de la plantilla, en la carpeta salidas\.' 162 '2' $tinta
-Nuevo-Boton 'Cambiar el documento que se actualiza' `
-            'Abre el explorador para elegir otro documento de Word.' 228 '3' $tinta
-Nuevo-Boton 'Permitir editar las cifras a mano en Word' `
-            'Ojo: lo que teclee lo machaca el siguiente refresco.' 294 '4' $aviso
-Nuevo-Boton 'Volver a proteger las cifras' `
-            'Word deja de permitir teclear dentro de ellas.' 360 '5' $tinta
+$i = if ($hayIconos) { @{
+  refrescar = [char]0xE72C; nuevo = [char]0xE8A5; carpeta = [char]0xE8E5
+  abrir     = [char]0xE785; cerrar = [char]0xE72E
+} } else { @{ refrescar=''; nuevo=''; carpeta=''; abrir=''; cerrar='' } }
+
+Nueva-Opcion $i.refrescar 'Actualizar el documento de siempre' `
+  'Conserva todo lo que haya escrito. Solo cambia las cifras.' `
+  ("Lee el Excel y reescribe unicamente las regiones marcadas del documento:`n" +
+   "la tabla del estado, los campos de encabezado y las cifras que haya`n" +
+   "intercalado en la redaccion.`n`n" +
+   "Su texto no se toca. Si borro un parrafo, sigue borrado.`n`n" +
+   "Cierre el documento en Word antes de ejecutarlo.") 108 '1' $acento
+
+Nueva-Opcion $i.nuevo 'Crear un documento nuevo' `
+  'Sale de la plantilla, en la carpeta salidas\.' `
+  ("Genera un Word desde cero con las cifras del Excel.`n`n" +
+   "Es una foto desechable: sirve para una entrega puntual. Lo que`n" +
+   "escriba en el NO pasa al siguiente que genere.`n`n" +
+   "No toca el documento de siempre.") 186 '2' $tinta
+
+Nueva-Opcion $i.carpeta 'Cambiar el documento que se actualiza' `
+  'Abre el explorador para elegir otro documento de Word.' `
+  ("Elige que archivo actualiza la opcion 1, y lo recuerda.`n`n" +
+   "Comprueba que sea un .docx valido y le avisa si todavia le faltan`n" +
+   "las regiones marcadas.`n`n" +
+   "Queda guardado en config.json.") 264 '3' $tinta
+
+Nueva-Opcion $i.abrir 'Permitir editar las cifras a mano en Word' `
+  'Ojo: lo que teclee lo machaca el siguiente refresco.' `
+  ("Quita el candado de las cifras y de la tabla para poder teclear`n" +
+   "encima en Word.`n`n" +
+   "AVISO: siguen vinculadas al Excel. Lo que escriba a mano`n" +
+   "desaparece en el siguiente refresco.`n`n" +
+   "Para que un valor escrito a mano sobreviva, hay que desvincularlo:`n" +
+   "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 342 '4' $ambar
+
+Nueva-Opcion $i.cerrar 'Volver a proteger las cifras' `
+  'Word deja de permitir teclear dentro de ellas.' `
+  ("Vuelve a poner el candado a la tabla, a los campos de encabezado`n" +
+   "y a las cifras intercaladas en la redaccion.`n`n" +
+   "OJO: solo protege lo que esta dentro de una region marcada. Un`n" +
+   "numero copiado y pegado del Excel como texto normal NO queda`n" +
+   "protegido, porque el programa no puede saber que es una cifra.") 420 '5' $tinta
 
 $salir = New-Object System.Windows.Forms.Button
 $salir.Text = 'Salir'
-$salir.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+$salir.Font = $fSub
 $salir.ForeColor = $suave
 $salir.BackColor = $fondo
 $salir.FlatStyle = 'Flat'
 $salir.FlatAppearance.BorderSize = 0
-$salir.Location = New-Object System.Drawing.Point(492, 430)
-$salir.Size = New-Object System.Drawing.Size(92, 32)
+$salir.Location = New-Object System.Drawing.Point((S 540), (S 500))
+$salir.Size = New-Object System.Drawing.Size((S 92), (S 34))
+$salir.Cursor = [System.Windows.Forms.Cursors]::Hand
 $salir.Add_Click({ $script:eleccion = '0'; $f.Close() })
 $f.Controls.Add($salir)
 
-[void]$f.ShowDialog()
+if ($captura) {
+  $f.Show(); [System.Windows.Forms.Application]::DoEvents()
+  $bmp = New-Object System.Drawing.Bitmap($f.Width, $f.Height)
+  $f.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle(0, 0, $f.Width, $f.Height)))
+  $bmp.Save($captura, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bmp.Dispose(); $f.Close()
+  Write-Output "CAPTURA=$captura"
+} else {
+  [void]$f.ShowDialog()
+}
 Write-Output ("ELECCION=" + $script:eleccion)
 """
 
@@ -171,7 +302,7 @@ def menu_ventana(destino):
         script.write_text(_PS_VENTANA, encoding="utf-8")
         res = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-STA", "-File", str(script), str(destino or "")],
+             "-STA", "-File", str(script), str(destino or ""), ""],
             capture_output=True, text=True, timeout=1800,
         )
     except Exception:

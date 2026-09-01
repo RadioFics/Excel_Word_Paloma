@@ -440,6 +440,70 @@ exactamente `desvincular` para esa cifra.
 
 ---
 
+---
+
+## «Protegí las cifras y aun así puedo editarlas»
+
+Pasa, y casi siempre por el mismo motivo. Lo medí sobre un documento real
+con las cifras protegidas:
+
+| Qué intenté editar | Resultado |
+|---|---|
+| Una celda de la tabla del estado | **bloqueado** |
+| Un campo de encabezado | **bloqueado** |
+| Una cifra intercalada con `insertar` | **bloqueado** |
+| Un número **copiado y pegado** del Excel | **se pudo escribir** |
+
+La protección funciona. Lo que no está protegido es lo último.
+
+### Por qué
+
+El candado no protege «los números»: protege **regiones marcadas**. Y una
+cifra que usted copia de Excel y pega en Word **no es una región** — es
+texto corriente, igual que la palabra «activos» que hay al lado.
+
+El programa no tiene forma de distinguirlos. Para Word, `515.000$` pegado a
+mano y `515.000$` tecleado son exactamente lo mismo: unos caracteres en un
+párrafo.
+
+```
+   Este parrafo lo escribio usted, y dentro pego 515.000$ del Excel.
+   |________________________ todo esto es texto suelto _____________|
+                              nada de aqui esta protegido
+
+   Este otro dice que los activos son [119.066.301] al cierre.
+                                       |___________|
+                                     esto SI es una region
+```
+
+### La solución
+
+No pegar: **insertar**.
+
+```bash
+python src\fs_documento.py catalogo "MI_LIBRO.xlsx"
+python src\fs_documento.py insertar "MI_DOCUMENTO.docx" total_assets actual
+```
+
+O desde Word: *Programador → Control de contenido de texto*, y ponerle la
+**Etiqueta** `fs-dato-<clave>-actual`.
+
+Una cifra insertada así queda protegida **y** se actualiza sola. Una pegada
+no hace ninguna de las dos cosas: se queda congelada con el valor del día
+que la pegó, y cualquiera puede cambiarla sin que nadie se entere.
+
+### Cómo saber qué está protegido
+
+```bash
+python src\fs_documento.py verificar "MI_DOCUMENTO.docx"
+```
+
+Lista las regiones que hay. Lo que no aparezca ahí, no está protegido.
+
+En Word se ve a simple vista si tiene los recuadros activados
+(`apariencia visible`): lo que lleva recuadro es región; lo que no, es texto
+suelto.
+
 ## ¿Y desde OneDrive?
 
 **OneDrive no tiene órdenes.** Es almacenamiento: guarda y sincroniza el

@@ -101,6 +101,7 @@ powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 '.\EstadosFinanc
 | [`docs/GUIA.md`](docs/GUIA.md) | **Guía de operación paso a paso.** Empieza por aquí. |
 | [`docs/DATOS.md`](docs/DATOS.md) | Dónde se editan las cifras, y cómo llevarlas a la redacción. |
 | [`docs/CAMBIAR_EXCEL.md`](docs/CAMBIAR_EXCEL.md) | Qué revisar cuando llegue un Excel nuevo. |
+| [`docs/VINCULOS_NATIVOS.md`](docs/VINCULOS_NATIVOS.md) | Vincular Excel y Word **sin programar**, y qué se rompe. |
 | [`docs/CONTRATO.md`](docs/CONTRATO.md) | Especificación de las regiones. Para quien toque el código. |
 | [`docs/ESTRUCTURA.md`](docs/ESTRUCTURA.md) | Organización de las carpetas. |
 | [`docs/DESPLIEGUE_ADDIN.md`](docs/DESPLIEGUE_ADDIN.md) | Subir el complemento de Word y qué pedirle a TI. |
