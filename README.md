@@ -1,18 +1,39 @@
-# Generador de Estado de Situación Financiera
+﻿# Generador de Estado de Situación Financiera
 
 Convierte la hoja del **Estado de Situación Financiera** de tu Excel en un
 documento de **Word** con el formato de la plantilla ya aplicado.
 
-Hay **dos maneras** de usarlo, y hacen cosas distintas:
+Hay **dos caminos**, y hacen cosas distintas. Arrastrar el Excel funciona en
+los dos; lo que cambia es el resultado.
 
-| | Qué hace | Cuándo |
+| Arrastra tu Excel sobre… | Qué hace | Tu redacción |
 |---|---|---|
-| **`GeneradorFS.exe`** | Crea un Word **nuevo** cada vez, desde la plantilla. | Entrega puntual. Lo que escribas en el Word **no sobrevive** a la siguiente corrida. |
-| **`fs_documento.py`** | **Refresca** un documento **que ya existe** y conserva tu redacción. | Documento vivo en OneDrive que se actualiza cada cierre. |
+| **`generar.bat`** · `GeneradorFS.exe` | Crea un Word **nuevo** en `salidas\` | Se pierde en cada corrida |
+| **`refrescar.bat`** · `RefrescarFS.exe` | **Actualiza** el documento base de OneDrive | **Se conserva** |
 
 Si lo que quieres es *«escribo mis párrafos y las cifras se actualizan
-solas»*, la segunda. La guía de operación completa está en
-**[`GUIA.md`](GUIA.md)**; el resumen, en [Documento base vivo](#documento-base-vivo).
+solas»*, el segundo. La guía de operación completa está en
+**[`docs/GUIA.md`](docs/GUIA.md)**; el resumen, en
+[Documento base vivo](#documento-base-vivo).
+
+## Estructura del repositorio
+
+```
+generar.bat        crea un Word nuevo          config.json   ajustes
+refrescar.bat      actualiza el documento base requirements.txt
+
+src/          codigo Python (motor y ordenes)
+docs/         documentacion
+plantillas/   documentos .docx modelo
+ejemplos/     libro .xlsx de muestra
+tools/        scripts de entorno, empaquetado y verificacion
+addin/        complemento de Word (TypeScript)
+salidas/      lo que genera generar.bat
+```
+
+Las carpetas se agrupan por **naturaleza**, no por extensión. Al añadir
+archivos, respete esa división: un `.docx` de plantilla va a `plantillas/`,
+uno de ejemplo a `ejemplos/`, y la documentación a `docs/`.
 
 ---
 
@@ -118,29 +139,43 @@ redacción). Todo lo demás ni se visita.
   reinyecta prosa, porque nunca la guardó.
 - Las tablas y las cifras van **bloqueadas**: nadie las pisa a mano.
 
-La especificación completa está en **[`CONTRATO.md`](CONTRATO.md)**.
+La especificación completa está en **[`docs/CONTRATO.md`](docs/CONTRATO.md)**.
+
+### Apunta al documento (una vez)
+
+En `config.json`, la clave `documento_base` dice qué archivo se refresca:
+
+```json
+"documento_base": "C:\\Users\\...\\OneDrive\\MI_DOCUMENTO.docx"
+```
 
 ### Preparar tu documento (una vez)
 
 Parte de la plantilla lista, o de un documento tuyo:
 
 ```bash
-python fs_documento.py construir "MI_DOCUMENTO.docx"
+refrescar.bat --preparar
 ```
 
 Añade lo que le falte para cumplir el contrato **sin borrar nada**. Puedes
 correrlo sobre un documento con meses de redacción encima: solo agrega las
 anclas que no estén. También hay una plantilla ya armada:
-[`plantilla_base_EF.docx`](plantilla_base_EF.docx).
+[`plantillas/plantilla_base_EF.docx`](plantillas/plantilla_base_EF.docx).
 
 ### Cada cierre
 
+Arrastra tu Excel sobre **`refrescar.bat`**. O, si prefieres escribirlo:
+
 ```bash
-python fs_documento.py refrescar "MI_DOCUMENTO.docx" "MI_LIBRO.xlsx"
+python src\fs_documento.py refrescar "MI_DOCUMENTO.docx" "MI_LIBRO.xlsx"
 ```
 
 Reescribe la tabla y los campos, antepone a la bitácora del documento el
 detalle de qué cifra cambió, y deja una copia `.bak` por si acaso.
+
+> **Cierra el documento en Word antes.** Si Word lo tiene abierto, la orden
+> se detiene sin tocar nada y te lo dice. No es una recomendación: escribir
+> sobre un `.docx` que Word tiene abierto lo deja inservible.
 
 ### Intercalar una cifra viva en la redacción
 
@@ -148,7 +183,7 @@ Para escribir *«los activos totales ascendieron a **119,066,301**»* y que esa
 cifra siga al Excel:
 
 ```bash
-python fs_documento.py catalogo
+python src\fs_documento.py catalogo
 ```
 
 te lista las claves disponibles. Luego, o bien la insertas desde Word
@@ -156,7 +191,7 @@ te lista las claves disponibles. Luego, o bien la insertas desde Word
 o bien:
 
 ```bash
-python fs_documento.py insertar "MI_DOCUMENTO.docx" total_assets actual
+python src\fs_documento.py insertar "MI_DOCUMENTO.docx" total_assets actual
 ```
 
 Campos: `actual`, `previo`, `nota`, `var_abs`, `var_pct`.
@@ -167,7 +202,7 @@ Por defecto las regiones de datos están bloqueadas pero la prosa es libre en
 todo el documento. Si quieres el modo estricto:
 
 ```bash
-python fs_documento.py proteger "MI_DOCUMENTO.docx" --clave TU_CLAVE
+python src\fs_documento.py proteger "MI_DOCUMENTO.docx" --clave TU_CLAVE
 ```
 
 | Rol | Puede | No puede |
@@ -175,7 +210,7 @@ python fs_documento.py proteger "MI_DOCUMENTO.docx" --clave TU_CLAVE
 | **Redactor** | escribir en las zonas `fs-prosa-*` | tocar tablas, campos ni cifras |
 | **Editor de datos** | lo anterior + refrescar | — (tiene la clave) |
 
-Para volver atrás: `python fs_documento.py desproteger "MI_DOCUMENTO.docx"`.
+Para volver atrás: `python src\fs_documento.py desproteger "MI_DOCUMENTO.docx"`.
 
 ### Órdenes
 
@@ -199,7 +234,7 @@ vínculo se rompe (se reporta como huérfano, no se rellena mal).
 Para que aguante renombrados, reordenaciones e inserciones de filas:
 
 ```bash
-python fs_documento.py nombrar "MI_LIBRO.xlsx" --aplicar
+python src\fs_documento.py nombrar "MI_LIBRO.xlsx" --aplicar
 ```
 
 Crea un nombre de Excel `fs_<clave>` por cada fila. **Cierra el libro en
@@ -216,15 +251,17 @@ maneja mal los controles de contenido: refresca desde el escritorio.
 
 ## Para desarrollo (no necesario para usar el `.exe`)
 
-El `.exe` se genera desde `generador_fs.py` (Python). Para trabajar el código:
+El `.exe` se genera desde `src\generador_fs.py` (Python). Para trabajar el código:
 
 | Documento | Contenido |
 |---|---|
-| [`GUIA.md`](GUIA.md) | **Guía de operación paso a paso** del documento base vivo. Empieza por aquí. |
-| [`CONTRATO.md`](CONTRATO.md) | Contrato de anclas Excel⇄Word. Lo comparten el motor de Python y el add-in. |
-| [`INSTALACION.md`](INSTALACION.md) | Montar Python portable en `.\python\` sin permisos de administrador. |
-| [`PRUEBA_EXTERNA.md`](PRUEBA_EXTERNA.md) | Reproducir la prueba en otro equipo (con el `.exe` o clonando). |
-| [`DIRECCION.md`](DIRECCION.md) | Dirección del proyecto, alternativas y caso ante TI. |
+| [`docs/GUIA.md`](docs/GUIA.md) | **Guía de operación paso a paso** del documento base vivo. Empieza por aquí. |
+| [`docs/CONTRATO.md`](docs/CONTRATO.md) | Contrato de anclas Excel⇄Word. Lo comparten el motor de Python y el add-in. |
+| [`docs/ESTRUCTURA.md`](docs/ESTRUCTURA.md) | Cómo están organizadas las carpetas y qué rutas dependen de ello. |
+| [`docs/DESPLIEGUE_ADDIN.md`](docs/DESPLIEGUE_ADDIN.md) | Subir el complemento de Word y qué pedirle a TI. |
+| [`docs/INSTALACION.md`](docs/INSTALACION.md) | Montar Python portable en `.\python\` sin permisos de administrador. |
+| [`docs/PRUEBA_EXTERNA.md`](docs/PRUEBA_EXTERNA.md) | Reproducir la prueba en otro equipo (con el `.exe` o clonando). |
+| [`docs/DIRECCION.md`](docs/DIRECCION.md) | Dirección del proyecto, alternativas y caso ante TI. |
 | [`addin/`](addin/) | Add-in de Word (v0) que actualiza el mismo documento en vez de generar uno nuevo. |
 
 Comandos (equipo con el entorno montado):

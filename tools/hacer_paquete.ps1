@@ -21,10 +21,9 @@ $zip   = Join-Path $dist "GeneradorFS_portable_$stamp.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
 $incluir = @(
-    'generador_fs.py', 'generar.bat', 'config.json', 'requirements.txt',
-    'README.md', 'INSTALACION.md', 'PRUEBA_EXTERNA.md',
-    'plantilla_estado_situacion_financiera.docx',
-    'Copia_Editable_con_columna_Tipo.xlsx',
+    'generar.bat', 'refrescar.bat', 'config.json', 'requirements.txt',
+    'README.md',
+    'src', 'docs', 'plantillas', 'ejemplos',
     'python', 'tools'
 ) | ForEach-Object { Join-Path $root $_ } | Where-Object { Test-Path $_ }
 

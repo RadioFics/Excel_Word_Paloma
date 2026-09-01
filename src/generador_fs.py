@@ -68,17 +68,34 @@ from jinja2.sandbox import SandboxedEnvironment
 # (PyInstaller --onefile). Cuando es .exe:
 #   BASE     = carpeta donde está el .exe (ahí busca el Excel y escribe salidas/)
 #   RECURSOS = carpeta temporal con los archivos embebidos (plantilla, config)
+# Como script, el código vive en src\ pero BASE es la RAÍZ del proyecto: es
+# ahí donde están config.json, salidas\ y las carpetas de recursos.
 if getattr(sys, "frozen", False):
     BASE = Path(sys.executable).resolve().parent
     RECURSOS = Path(getattr(sys, "_MEIPASS", BASE))
 else:
-    BASE = Path(__file__).resolve().parent
+    BASE = Path(__file__).resolve().parent.parent
     RECURSOS = BASE
 
 SALIDAS = BASE / "salidas"
 CONFIG_PATH = BASE / "config.json"            # config externa opcional (junto al .exe)
 CONFIG_EMBEBIDA = RECURSOS / "config.json"    # config por defecto embebida
-PLANTILLA_EMBEBIDA = RECURSOS / "plantilla_estado_situacion_financiera.docx"
+
+#: Subcarpetas donde se buscan los recursos cuando el proyecto está
+#: desplegado como código. Dentro del .exe todo queda plano en _MEIPASS,
+#: por eso también se prueba la raíz.
+_CARPETAS_RECURSO = ("", "plantillas", "ejemplos")
+
+
+def buscar_recurso(nombre, *raices):
+    """Localiza un archivo de apoyo (plantilla, ejemplo) sin importar si
+    estamos como script (subcarpetas) o dentro del .exe (todo plano)."""
+    for raiz in (raices or (BASE, RECURSOS)):
+        for sub in _CARPETAS_RECURSO:
+            cand = (raiz / sub / nombre) if sub else (raiz / nombre)
+            if cand.exists():
+                return cand
+    return None
 
 TIPOS_VALIDOS = {"H", "I", "S", "T", "N"}
 
@@ -106,6 +123,11 @@ DEFAULTS = {
     # renombra la fila o inserta filas encima, el nombre sigue apuntando a la
     # misma línea y el vínculo con el Word no se rompe. Ver CONTRATO.md.
     "prefijo_rangos": "fs_",
+    # Documento de Word que se refresca en el sitio (el que vive en OneDrive).
+    # Ruta absoluta, o relativa a esta carpeta. Si está vacío, hay que
+    # indicar el documento a mano en cada orden. Solo lo usa fs_documento.py
+    # / RefrescarFS.exe; el generador clásico lo ignora.
+    "documento_base": "",
 }
 
 
@@ -654,11 +676,17 @@ def leer_contexto(ruta_xlsx, cfg):
 
 def encontrar_excel_por_convencion(cfg):
     clave = cfg["buscar_por_convencion"]
-    candidatos = sorted(
-        [p for p in BASE.glob("*.xlsx") if clave.lower() in p.stem.lower()],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    # La carpeta del .exe / raíz del proyecto primero; ejemplos\ después,
+    # para que el libro de muestra no gane a uno que el usuario haya dejado.
+    candidatos = []
+    for carpeta in (BASE, BASE / "ejemplos"):
+        if not carpeta.is_dir():
+            continue
+        candidatos += [
+            p for p in carpeta.glob("*.xlsx")
+            if clave.lower() in p.stem.lower() and not p.name.startswith("~$")
+        ]
+    candidatos.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidatos:
         icono = "GeneradorFS.exe" if getattr(sys, "frozen", False) else "generar.bat"
         raise ValueError(
@@ -689,9 +717,9 @@ def ejecutar(argv):
     if len(args) >= 2:
         plantilla = Path(args[1]).resolve()
     else:
-        plantilla = BASE / cfg["plantilla"]
-        if not plantilla.exists():
-            plantilla = PLANTILLA_EMBEBIDA          # la que viaja dentro del .exe
+        # junto al .exe / en la raíz primero (permite sustituirla sin
+        # recompilar), luego plantillas\ y por último la embebida.
+        plantilla = buscar_recurso(cfg["plantilla"]) or (BASE / cfg["plantilla"])
 
     if not xlsx.exists():
         raise ValueError(f"No se encontró el libro de Excel:\n  {xlsx}")

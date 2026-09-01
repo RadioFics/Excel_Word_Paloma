@@ -1,4 +1,4 @@
-# Contrato de anclas — Excel ⇄ Word
+﻿# Contrato de anclas — Excel ⇄ Word
 
 Especificación única que consumen `fs_contrato.py` / `fs_documento.py`
 (Python) y el add-in de Word (`addin/`). Si cambias algo aquí, cambia en los
@@ -100,8 +100,8 @@ etiqueta. `catalogo` muestra el origen de cada clave.
 #### Crear los rangos
 
 ```bash
-python fs_documento.py nombrar <libro.xlsx>            # simulación
-python fs_documento.py nombrar <libro.xlsx> --aplicar  # los escribe
+python src\fs_documento.py nombrar <libro.xlsx>            # simulación
+python src\fs_documento.py nombrar <libro.xlsx> --aplicar  # los escribe
 ```
 
 Crea un nombre `fs_<clave>` por cada línea con etiqueta, apuntando a su
@@ -142,7 +142,7 @@ idéntico resultado en Python y en TypeScript:
 Para ver las claves reales de tu libro:
 
 ```bash
-python fs_documento.py catalogo
+python src\fs_documento.py catalogo
 ```
 
 ### El campo
@@ -233,7 +233,7 @@ libre en todo el documento. **Es el modo recomendado para empezar.**
 ### Modo estricto — `proteger`
 
 ```bash
-python fs_documento.py proteger EF_base.docx --clave <clave>
+python src\fs_documento.py proteger EF_base.docx --clave <clave>
 ```
 
 Pone el documento en solo lectura (`w:documentProtection edit="readOnly"`) y

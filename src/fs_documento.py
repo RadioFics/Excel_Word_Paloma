@@ -239,6 +239,63 @@ def _vaciar(el):
 
 
 # --------------------------------------------------------------------------- #
+#  Escritura segura
+# --------------------------------------------------------------------------- #
+def comprobar_escribible(ruta):
+    """Aborta ANTES de tocar nada si el documento está en uso.
+
+    Word mantiene el .docx abierto mientras lo tiene en pantalla. Si se
+    escribe encima en ese momento, el archivo queda inservible (bytes en
+    cero). Antes esto solo se avisaba en la documentación; ahora se impide.
+    """
+    ruta = Path(ruta)
+    if not ruta.exists():
+        return
+    bloqueo = ruta.parent / f"~${ruta.name}"
+    abierto_en_office = bloqueo.exists()
+    try:
+        with open(ruta, "r+b"):
+            pass
+        if not abierto_en_office:
+            return
+    except PermissionError:
+        pass
+    except OSError as e:
+        raise ValueError(f"No puedo escribir en el documento:\n  {ruta}\n  {e}")
+
+    raise ValueError(
+        f"El documento está abierto:\n  {ruta.name}\n\n"
+        "Ciérrelo en Word y vuelva a ejecutar.\n\n"
+        "No se ha modificado nada. Escribir sobre un documento que Word\n"
+        "tiene abierto lo deja inservible, así que la operación se detiene\n"
+        "aquí a propósito."
+    )
+
+
+def guardar_seguro(doc, ruta):
+    """Guarda escribiendo primero a un temporal de la misma carpeta y luego
+    reemplazando de un golpe.
+
+    os.replace() es atómico dentro del mismo volumen: o queda el documento
+    nuevo entero, o queda el viejo intacto. Nunca un archivo a medio
+    escribir. Importa especialmente en OneDrive, que sincroniza en cuanto
+    ve cambios.
+    """
+    ruta = Path(ruta)
+    tmp = ruta.parent / f".{ruta.stem}.tmp{ruta.suffix}"
+    try:
+        doc.save(str(tmp))
+        os.replace(tmp, ruta)
+    except Exception:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        raise
+
+
+# --------------------------------------------------------------------------- #
 #  Tablas
 # --------------------------------------------------------------------------- #
 def _anchos_de(tbl):
@@ -422,6 +479,7 @@ def construir(ruta, ctx=None, verbose=True):
     Idempotente: correrla dos veces no duplica nada. No borra prosa ni
     reordena lo que ya exista; solo agrega las anclas ausentes al final.
     """
+    comprobar_escribible(ruta)
     doc = Document(str(ruta))
     idx = _indexar(doc)
     añadidos = []
@@ -513,7 +571,7 @@ def construir(ruta, ctx=None, verbose=True):
         _cuerpo_append(doc, sdt)
         añadidos.append(C.TAG_META)
 
-    doc.save(str(ruta))
+    guardar_seguro(doc, ruta)
     if verbose:
         if añadidos:
             print(f"  Anclas añadidas ({len(añadidos)}):")
@@ -677,6 +735,7 @@ def insertar_dato(ruta, clave_, campo, zona="analisis", antes="", despues="",
             f"'{campo}' no es un campo válido.\n"
             f"Válidos: {', '.join(C.CAMPOS_DATO)}"
         )
+    comprobar_escribible(ruta)
     doc = Document(str(ruta))
     idx = _indexar(doc)
     sdt_zona = idx.get(C.tag_prosa(zona))
@@ -702,7 +761,7 @@ def insertar_dato(ruta, clave_, campo, zona="analisis", antes="", despues="",
     if despues:
         p.append(_run(despues))
     _contenido(sdt_zona).append(p)
-    doc.save(str(ruta))
+    guardar_seguro(doc, ruta)
     if verbose:
         print(f"  + {tag}  en la zona '{zona}'")
     return True
@@ -710,6 +769,7 @@ def insertar_dato(ruta, clave_, campo, zona="analisis", antes="", despues="",
 
 def refrescar(ruta, ctx, origen="", con_registro=True, verbose=True):
     """Reescribe SOLO las regiones de datos. Devuelve un informe."""
+    comprobar_escribible(ruta)
     doc = Document(str(ruta))
     idx = _indexar(doc)
     valores, colisiones = C.construir_valores(ctx)
@@ -760,7 +820,7 @@ def refrescar(ruta, ctx, origen="", con_registro=True, verbose=True):
         informe["con_registro"] = False
 
     _guardar_meta(idx, ctx, origen)
-    doc.save(str(ruta))
+    guardar_seguro(doc, ruta)
     return informe
 
 
@@ -843,6 +903,7 @@ def proteger(ruta, clave_, verbose=True):
     Rol EDITOR DE DATOS : conoce la clave (o usa el add-in), que desprotege,
                           refresca y vuelve a proteger.
     """
+    comprobar_escribible(ruta)
     doc = Document(str(ruta))
 
     # 1. rangos editables alrededor de cada zona de prosa
@@ -894,20 +955,21 @@ def proteger(ruta, clave_, verbose=True):
     else:
         settings.append(prot)
 
-    doc.save(str(ruta))
+    guardar_seguro(doc, ruta)
     if verbose:
         print(f"  Protegido. Zonas de prosa editables: {n}")
     return n
 
 
 def desproteger(ruta, verbose=True):
+    comprobar_escribible(ruta)
     doc = Document(str(ruta))
     settings = doc.settings.element
     quitados = 0
     for viejo in settings.findall(qn("w:documentProtection")):
         settings.remove(viejo)
         quitados += 1
-    doc.save(str(ruta))
+    guardar_seguro(doc, ruta)
     if verbose:
         print("  Protección retirada." if quitados else "  No estaba protegido.")
     return quitados
@@ -1067,9 +1129,94 @@ def _cargar_ctx(argumento=None):
     return ctx, xlsx, cfg
 
 
+def resolver_documento(argumento, cfg):
+    """Decide sobre qué .docx se trabaja.
+
+    Prioridad: lo que se indique en la orden; si no, config.json ->
+    'documento_base' (ruta absoluta, o relativa a la raíz del proyecto).
+    """
+    if argumento:
+        return Path(argumento).resolve()
+
+    import generador_fs as G
+
+    crudo = str(cfg.get("documento_base") or "").strip()
+    if not crudo:
+        raise ValueError(
+            "No sé qué documento actualizar.\n\n"
+            "Indíquelo en la orden:\n"
+            "    ... refrescar \"MI_DOCUMENTO.docx\"\n\n"
+            "O fíjelo de una vez en config.json:\n"
+            '    "documento_base": "C:\\\\ruta\\\\a\\\\MI_DOCUMENTO.docx"'
+        )
+    ruta = Path(crudo)
+    if not ruta.is_absolute():
+        ruta = (G.BASE / ruta).resolve()
+    if ruta.exists():
+        return ruta
+
+    # Los nombres escritos en Office suelen colar espacios duros (U+00A0) y
+    # acentos descompuestos, invisibles al ojo pero distintos byte a byte.
+    # Antes de rendirnos, buscamos un archivo equivalente en la carpeta.
+    cercano = _buscar_parecido(ruta)
+    if cercano is not None:
+        print(f"(El nombre de config.json no coincidía exactamente; "
+              f"uso '{cercano.name}')")
+        return cercano
+
+    raise ValueError(
+        f"config.json apunta a un documento que no existe:\n  {ruta}\n\n"
+        "Revise la clave 'documento_base'. Ojo con los espacios: un nombre\n"
+        "escrito en Office puede llevar espacios duros que no se ven."
+    )
+
+
+def _normalizar_nombre(nombre):
+    """Colapsa cualquier tipo de espacio y unifica la forma Unicode."""
+    import unicodedata
+
+    s = unicodedata.normalize("NFC", str(nombre))
+    return " ".join(s.split()).casefold()
+
+
+def _buscar_parecido(ruta):
+    """Un archivo de la misma carpeta cuyo nombre solo difiera en espacios
+    o en la forma de los acentos. Devuelve None si no hay exactamente uno."""
+    carpeta = ruta.parent
+    if not carpeta.is_dir():
+        return None
+    objetivo = _normalizar_nombre(ruta.name)
+    iguales = [p for p in carpeta.glob("*" + ruta.suffix)
+               if _normalizar_nombre(p.name) == objetivo]
+    return iguales[0] if len(iguales) == 1 else None
+
+
 def _respaldar(ruta):
+    """Copia previa, pero NUNCA sobre una copia buena con una mala.
+
+    Un .docx es un ZIP. Si el archivo de partida no lo es (quedó a medio
+    escribir, o Word lo tenía abierto), respaldarlo destruiría la única
+    copia sana que queda. Mejor abortar y decirlo.
+    """
+    import zipfile
+
     ruta = Path(ruta)
     bak = ruta.with_suffix(ruta.suffix + ".bak")
+
+    if not zipfile.is_zipfile(ruta):
+        aviso = (
+            f"El documento no es un .docx válido:\n  {ruta}\n\n"
+            "Suele significar que se escribió sobre él mientras Word lo\n"
+            "tenía abierto."
+        )
+        if bak.exists() and zipfile.is_zipfile(bak):
+            aviso += (
+                f"\n\nHay una copia previa SANA al lado:\n  {bak.name}\n"
+                "Ciérrelo todo y restaure con:\n"
+                f'    copy /Y "{bak.name}" "{ruta.name}"'
+            )
+        raise ValueError(aviso)
+
     shutil.copy2(ruta, bak)
     return bak
 
@@ -1163,13 +1310,17 @@ def main(argv):
         print("=" * 68)
         return 0
 
-    if not args:
-        print(f"Falta la ruta del documento: {orden} <doc.docx>")
-        return 1
-    doc_ruta = Path(args[0]).resolve()
+    # De aquí en adelante todas las órdenes trabajan sobre un .docx. Si no
+    # se indica, se toma el de config.json -> "documento_base".
+    import generador_fs as _G
+
+    doc_ruta = resolver_documento(args[0] if args else None, _G.cargar_config())
     if not doc_ruta.exists():
         print(f"No se encontró el documento:\n  {doc_ruta}")
         return 1
+    if not args:
+        args = [str(doc_ruta)]           # para que args[1] siga siendo el xlsx
+        print(f"(Documento tomado de config.json: {doc_ruta.name})")
 
     if orden in ("construir", "reparar"):
         ctx = None

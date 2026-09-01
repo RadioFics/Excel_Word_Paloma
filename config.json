@@ -1,6 +1,12 @@
 {
   "_comentario": "Todo es opcional. Borre una clave para usar su valor por defecto. 'primera_fila': un numero fija la fila de inicio; 'auto' la detecta. 'columnas': letras (A, C, E, F, G) para forzar una columna; null para detectarla por contenido.",
 
+  "_documento_base": "Documento de Word que actualiza refrescar.bat / RefrescarFS.exe, conservando la redaccion. Ruta absoluta, o relativa a esta carpeta. Vacio = hay que indicarlo en cada orden. El generador clasico (generar.bat) lo ignora: ese siempre crea un Word nuevo en salidas\\.",
+  "documento_base": "C:\\Users\\JuanEstebanCalle\\OneDrive - Collective Mining C-Suite\\DOCUMENTO DE PRUEBA DE EDICIÓN\u00a0- PAMELA.docx",
+
+  "_prefijo_rangos": "Prefijo de los nombres de Excel que dan identidad estable a cada fila (fs_total_assets). Crearlos: fs_documento.py nombrar <libro> --aplicar",
+  "prefijo_rangos": "fs_",
+
   "empresa": "Collective Mining Ltd.",
 
   "hoja": "FS",

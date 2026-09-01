@@ -34,3 +34,6 @@ Thumbs.db
 # Copias previas que deja fs_documento.py antes de escribir un archivo
 *.docx.bak
 *.xlsx.bak
+
+# Temporal de la escritura atomica (se reemplaza de un golpe al terminar)
+.*.tmp.docx

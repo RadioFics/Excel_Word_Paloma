@@ -42,7 +42,7 @@ sobrevive intacta.
 Lo más rápido es dejar que lo arme el motor de Python:
 
 ```
-python fs_documento.py construir "MI_DOCUMENTO.docx"
+python src\fs_documento.py construir "MI_DOCUMENTO.docx"
 ```
 
 Deja todas las anclas puestas, bloqueadas y con el formato correcto. Es

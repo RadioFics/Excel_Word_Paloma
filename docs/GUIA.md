@@ -1,4 +1,4 @@
-# Guía de operación — el documento que se actualiza solo
+﻿# Guía de operación — el documento que se actualiza solo
 
 Cómo funciona hoy el documento base de Word: se le refrescan las cifras desde
 el Excel sin perder una coma de lo que hayas escrito.
@@ -44,11 +44,11 @@ vínculo se apoya en el texto de la etiqueta y se rompe si alguien renombra
 una fila.
 
 ```bash
-python fs_documento.py nombrar "MI_LIBRO.xlsx"
+python src\fs_documento.py nombrar "MI_LIBRO.xlsx"
 ```
 
 ```bash
-python fs_documento.py nombrar "MI_LIBRO.xlsx" --aplicar
+python src\fs_documento.py nombrar "MI_LIBRO.xlsx" --aplicar
 ```
 
 *Ya aplicado sobre `Copia_Editable_con_columna_Tipo.xlsx`: 28 nombres.*
@@ -65,14 +65,14 @@ encabezado, las zonas de redacción, la bitácora. **No borra nada**, así que
 puedes correrlo sobre un documento con meses de trabajo encima.
 
 ```bash
-python fs_documento.py construir "MI_DOCUMENTO.docx"
+python src\fs_documento.py construir "MI_DOCUMENTO.docx"
 ```
 
 ¿No tienes documento todavía? Parte de la plantilla del repositorio,
-[`plantilla_base_EF.docx`](plantilla_base_EF.docx), o genera una nueva:
+[`plantillas/plantilla_base_EF.docx`](../plantillas/plantilla_base_EF.docx), o genera una nueva:
 
 ```bash
-python fs_documento.py plantilla "NUEVO.docx"
+python src\fs_documento.py plantilla "NUEVO.docx"
 ```
 
 ### 3. Redactar · *libre*
@@ -92,13 +92,13 @@ cifra siga al Excel sin que nadie la vuelva a teclear. Primero se consulta qué
 hay disponible:
 
 ```bash
-python fs_documento.py catalogo
+python src\fs_documento.py catalogo
 ```
 
 Y se coloca la cifra donde toque:
 
 ```bash
-python fs_documento.py insertar "MI_DOCUMENTO.docx" total_assets actual
+python src\fs_documento.py insertar "MI_DOCUMENTO.docx" total_assets actual
 ```
 
 Campos posibles: `actual`, `previo`, `nota`, `var_abs` (la diferencia) y
@@ -109,11 +109,19 @@ texto**, y ponerle la etiqueta `fs-dato-total_assets-actual`.
 
 ### 5. Refrescar · *cada cierre*
 
-El paso del día a día. Un comando, unos segundos.
+El paso del día a día. **Arrastra tu Excel sobre `refrescar.bat`** (o sobre
+`RefrescarFS.exe`). Qué documento actualiza lo dice `config.json` →
+`documento_base`.
+
+Si prefieres escribirlo:
 
 ```bash
-python fs_documento.py refrescar "MI_DOCUMENTO.docx" "MI_LIBRO.xlsx"
+python src\fs_documento.py refrescar "MI_DOCUMENTO.docx" "MI_LIBRO.xlsx"
 ```
+
+> **No confundas los dos iconos.** `generar.bat` crea un Word **nuevo** en
+> `salidas\` y no toca el documento base — es el comportamiento de siempre.
+> `refrescar.bat` es el que actualiza el documento vivo.
 
 Qué hace, exactamente:
 
@@ -123,15 +131,26 @@ Qué hace, exactamente:
 - Deja una copia `.bak` del documento anterior.
 - Avisa si alguna cifra de tu texto ya no existe en el Excel.
 
-> **Cierra el documento en Word antes.** El motor escribe el archivo
-> directamente; si Word lo tiene abierto, se pelean por él. Y evita refrescar
-> mientras alguien más lo edita en el navegador: la coautoría de Word Online
-> maneja mal este tipo de documento.
+> **Cierra el documento en Word antes.** Si Word lo tiene abierto, la orden
+> se detiene **sin tocar nada** y te lo dice. No es un consejo: escribir
+> sobre un `.docx` que Word tiene abierto lo deja inservible (bytes en cero).
+> Por eso la herramienta lo comprueba antes de empezar.
+>
+> Evita también refrescar mientras alguien lo edita en el navegador: la
+> coautoría de Word Online maneja mal este tipo de documento.
+
+**Si aun así acabas con un documento roto**, hay una copia sana al lado. La
+herramienta se niega a respaldar un archivo inválido justamente para no
+pisarla:
+
+```bash
+copy /Y "MI_DOCUMENTO.docx.bak" "MI_DOCUMENTO.docx"
+```
 
 ### 6. Comprobar · *cuando dudes*
 
 ```bash
-python fs_documento.py verificar "MI_DOCUMENTO.docx"
+python src\fs_documento.py verificar "MI_DOCUMENTO.docx"
 ```
 
 Lista las regiones que tiene el documento, qué cifras hay intercaladas y
@@ -159,7 +178,7 @@ Existe un **modo estricto** que pone el documento entero en solo lectura y
 abre huecos únicamente en las zonas de redacción:
 
 ```bash
-python fs_documento.py proteger "MI_DOCUMENTO.docx" --clave TU_CLAVE
+python src\fs_documento.py proteger "MI_DOCUMENTO.docx" --clave TU_CLAVE
 ```
 
 | Rol | Puede | No puede |
@@ -225,4 +244,4 @@ conviene decidir antes quién custodia la clave. Se quita con `desproteger`.
 ---
 
 Especificación completa en [`CONTRATO.md`](CONTRATO.md) · Motor en
-[`fs_documento.py`](fs_documento.py)
+[`src/fs_documento.py`](../src/fs_documento.py)
