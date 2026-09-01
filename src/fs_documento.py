@@ -18,7 +18,12 @@ borrada, porque el motor nunca la vuelve a inyectar.
     python fs_documento.py catalogo   [libro.xlsx]
     python fs_documento.py nombrar    [libro.xlsx] [--aplicar]
     python fs_documento.py estado     [libro.xlsx]
-    python fs_documento.py limpiar-bitacora <doc.docx>
+    python fs_documento.py limpiar-bitacora <doc.docx>
+    python fs_documento.py desbloquear <doc.docx> [clave]
+    python fs_documento.py bloquear    <doc.docx> [clave]
+    python fs_documento.py desvincular <doc.docx> <clave>
+    python fs_documento.py simplificar <doc.docx> [--quitar-zonas]
+    python fs_documento.py apariencia  <doc.docx> <visible|invisible>
     python fs_documento.py plantilla  <destino.docx>
     python fs_documento.py proteger   <doc.docx> --clave <clave>
     python fs_documento.py desproteger <doc.docx>
@@ -45,7 +50,7 @@ from datetime import datetime
 
 from docx import Document
 from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.oxml.ns import qn, nsmap
 
 # El Python portable de .\python\ es la distribución "embeddable": su
 # archivo python3xx._pth reemplaza el cálculo normal de sys.path y, con él,
@@ -788,6 +793,15 @@ def construir(ruta, ctx=None, verbose=True, cfg_bitacora=None):
         _cuerpo_append(doc, sdt)
         añadidos.append(C.TAG_META)
 
+    # Aspecto: sin recuadro en las zonas de redacción ni en los metadatos,
+    # para que escribir se parezca a escribir en un documento normal.
+    normalizar_apariencia(
+        doc, datos=str((cfg_bitacora or {}).get("apariencia_datos", "boundingBox")))
+    _sdt_meta = _indexar(doc).get(C.TAG_META)
+    if _sdt_meta is not None:
+        for _p in _contenido(_sdt_meta).findall(qn("w:p")):
+            _ocultar_parrafo(_p)
+
     guardar_seguro(doc, ruta)
     if verbose:
         if añadidos:
@@ -1161,6 +1175,256 @@ def verificar(ruta, ctx=None):
     return rep
 
 
+# --------------------------------------------------------------------------- #
+#  Apariencia de las regiones
+# --------------------------------------------------------------------------- #
+#  Word dibuja un recuadro gris alrededor de cada control de contenido. Para
+#  la tabla y las cifras eso es útil: se ve de un vistazo qué lo mantiene el
+#  Excel. Para las zonas de redacción y para los metadatos es un estorbo —
+#  la persona quiere escribir sobre papel en blanco, no dentro de una caja.
+#
+#  w15:appearance="hidden" quita el recuadro sin quitar el ancla. Es de Word
+#  2013 en adelante; las versiones viejas simplemente lo ignoran y siguen
+#  mostrando el recuadro, que es un fallo inofensivo.
+NS_W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
+nsmap.setdefault("w15", NS_W15)
+
+#: Qué aspecto tiene cada familia. 'hidden' = sin recuadro.
+#: Las zonas de redacción y los metadatos van SIEMPRE sin recuadro.
+#: Las regiones de datos son configurables: con recuadro se ve de un vistazo
+#: qué mantiene el Excel; sin él, la cifra se lee como una palabra más del
+#: párrafo — sigue bloqueada y sigue refrescándose igual.
+APARIENCIA_FIJA = {
+    C.FAM_PROSA: "hidden",
+    "registro": "hidden",
+    "meta": "hidden",
+}
+FAMILIAS_CONFIGURABLES = (C.FAM_TABLA, C.FAM_CAMPO, C.FAM_DATO)
+
+
+def apariencia_de(familia, datos="boundingBox"):
+    if familia in APARIENCIA_FIJA:
+        return APARIENCIA_FIJA[familia]
+    if familia in FAMILIAS_CONFIGURABLES:
+        return datos
+    return None
+
+
+def _poner_apariencia(pr, valor):
+    """Fija w15:appearance dentro de un w:sdtPr, sin duplicarlo."""
+    if pr is None:
+        return
+    for viejo in pr.findall(qn("w15:appearance")):
+        pr.remove(viejo)
+    ap = OxmlElement("w15:appearance")
+    ap.set(qn("w15:val"), valor)
+    # va al final del sdtPr, junto al resto de propiedades visuales
+    pr.append(ap)
+
+
+def normalizar_apariencia(doc, datos="boundingBox", verbose=False):
+    """Ajusta el recuadro de todas las regiones. Idempotente.
+
+    `datos` es el aspecto de las tablas, campos y cifras:
+    'boundingBox' (recuadro visible) o 'hidden' (se lee como texto normal).
+    """
+    n = 0
+    for sdt in doc.element.body.iter(qn("w:sdt")):
+        familia, _, _ = C.descomponer(_tag_de(sdt))
+        valor = apariencia_de(familia, datos)
+        if valor is None:
+            continue
+        pr = sdt.find(qn("w:sdtPr"))
+        actual = pr.find(qn("w15:appearance")) if pr is not None else None
+        if actual is not None and actual.get(qn("w15:val")) == valor:
+            continue
+        _poner_apariencia(pr, valor)
+        n += 1
+    return n
+
+
+def _ocultar_parrafo(p):
+    """Marca el párrafo entero como texto oculto, incluida su marca final.
+
+    Sin esto, un párrafo de metadatos con el texto oculto sigue ocupando una
+    línea en blanco: lo que se ve en pantalla es un renglón vacío que nadie
+    sabe de dónde sale.
+    """
+    pPr = p.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p.insert(0, pPr)
+    rPr = pPr.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        pStyle = pPr.find(qn("w:pStyle"))
+        if pStyle is not None:
+            pStyle.addnext(rPr)
+        else:
+            pPr.insert(0, rPr)
+    if rPr.find(qn("w:vanish")) is None:
+        rPr.append(OxmlElement("w:vanish"))
+    return p
+
+
+def simplificar_documento(ruta, quitar_prosa=False, datos="boundingBox",
+                          verbose=True):
+    """Deja el documento cómodo para escribir.
+
+    - quita el recuadro de las zonas de redacción y de los metadatos
+    - oculta de verdad el párrafo de metadatos (no deja renglón en blanco)
+    - opcionalmente disuelve las zonas de redacción, que dejan de ser
+      controles y pasan a ser párrafos normales
+
+    Las cifras y la tabla NO se tocan: su recuadro es informativo y su
+    candado es lo que impide pisarlas.
+    """
+    comprobar_escribible(ruta)
+    doc = Document(str(ruta))
+
+    ajustadas = normalizar_apariencia(doc, datos=datos)
+
+    ocultos = 0
+    idx = _indexar(doc)
+    sdt_meta = idx.get(C.TAG_META)
+    if sdt_meta is not None:
+        for p in _contenido(sdt_meta).findall(qn("w:p")):
+            _ocultar_parrafo(p)
+            ocultos += 1
+
+    disueltas = []
+    if quitar_prosa:
+        for sdt in list(doc.element.body.iter(qn("w:sdt"))):
+            tag = _tag_de(sdt)
+            familia, nombre, _ = C.descomponer(tag)
+            if familia != C.FAM_PROSA:
+                continue
+            cont = _contenido(sdt)
+            padre = sdt.getparent()
+            if cont is None or padre is None:
+                continue
+            for hijo in list(cont):
+                sdt.addprevious(hijo)
+            padre.remove(sdt)
+            disueltas.append(tag)
+
+    guardar_seguro(doc, ruta)
+    if verbose:
+        print(f"  Recuadros ajustados:        {ajustadas}")
+        print(f"  Párrafos de metadatos ocultos: {ocultos}")
+        if quitar_prosa:
+            print(f"  Zonas de redacción disueltas: {len(disueltas)}")
+            for t in disueltas:
+                print(f"    - {t}   (ahora son párrafos normales)")
+            print()
+            print("  OJO: sin zonas de redacción no se puede usar el modo estricto")
+            print("       de dos editores (proteger). Se pueden recrear con 'reparar'.")
+    return ajustadas, ocultos, disueltas
+# --------------------------------------------------------------------------- #
+#  Candado por región: dejar (o no) que se escriba a mano en Word
+# --------------------------------------------------------------------------- #
+FAMILIAS_DATOS = (C.FAM_TABLA, C.FAM_CAMPO, C.FAM_DATO)
+
+
+def cambiar_candado(ruta, bloquear=True, solo=None, verbose=True):
+    """Pone o quita el candado de las regiones de datos.
+
+    Con el candado puesto (por defecto) Word no deja teclear dentro de la
+    tabla ni de las cifras. Sin candado, sí — pero OJO: lo que se escriba a
+    mano lo machaca el siguiente refresco, porque la región sigue vinculada
+    al Excel. Para conservar un valor escrito a mano hay que DESVINCULAR la
+    región (ver desvincular_region).
+
+    `solo` limita la operación a un tag exacto o a una clave.
+    """
+    comprobar_escribible(ruta)
+    doc = Document(str(ruta))
+    tocadas, nombres = 0, []
+
+    for sdt in doc.element.body.iter(qn("w:sdt")):
+        tag = _tag_de(sdt)
+        familia, nombre, campo = C.descomponer(tag)
+        if familia not in FAMILIAS_DATOS:
+            continue
+        if solo and solo not in (tag, nombre):
+            continue
+
+        pr = sdt.find(qn("w:sdtPr"))
+        if pr is None:
+            continue
+        lock = pr.find(qn("w:lock"))
+
+        if bloquear:
+            if lock is None:
+                lock = OxmlElement("w:lock")
+                # w:lock va después de w:id y antes del tipo de control.
+                tipo = pr.find(qn("w:text"))
+                if tipo is None:
+                    tipo = pr.find(qn("w:richText"))
+                if tipo is not None:
+                    tipo.addprevious(lock)
+                else:
+                    pr.append(lock)
+            lock.set(qn("w:val"), "sdtContentLocked")
+        elif lock is not None:
+            pr.remove(lock)
+
+        tocadas += 1
+        nombres.append(tag)
+
+    guardar_seguro(doc, ruta)
+    if verbose:
+        verbo = "bloqueadas" if bloquear else "desbloqueadas"
+        print(f"  Regiones {verbo}: {tocadas}")
+        if solo:
+            for t in nombres:
+                print(f"    - {t}")
+    return tocadas
+
+
+def desvincular_region(ruta, seleccion, verbose=True):
+    """Convierte una región en texto normal: deja de refrescarse.
+
+    Es la salida definitiva para una cifra que hay que escribir a mano y
+    que debe SOBREVIVIR a los refrescos. El texto que hubiera dentro se
+    conserva tal cual, pero ya no hay ancla: el motor no volverá a tocarlo
+    ni lo reportará como huérfano.
+
+    No tiene vuelta atrás automática; para volver a vincularla se usa
+    'insertar'.
+    """
+    comprobar_escribible(ruta)
+    doc = Document(str(ruta))
+    quitadas = []
+
+    for sdt in list(doc.element.body.iter(qn("w:sdt"))):
+        tag = _tag_de(sdt)
+        familia, nombre, campo = C.descomponer(tag)
+        if familia not in FAMILIAS_DATOS:
+            continue
+        if seleccion not in (tag, nombre):
+            continue
+
+        cont = _contenido(sdt)
+        padre = sdt.getparent()
+        if cont is None or padre is None:
+            continue
+        # el contenido pasa a ocupar el sitio del control
+        for hijo in list(cont):
+            sdt.addprevious(hijo)
+        padre.remove(sdt)
+        quitadas.append(tag)
+
+    if quitadas:
+        guardar_seguro(doc, ruta)
+    if verbose:
+        if quitadas:
+            print(f"  Regiones desvinculadas: {len(quitadas)}")
+            for t in quitadas:
+                print(f"    - {t}   (ahora es texto normal)")
+        else:
+            print(f"  No encontré ninguna región que coincida con '{seleccion}'.")
+    return quitadas
 # --------------------------------------------------------------------------- #
 #  Protección (los dos editores)
 # --------------------------------------------------------------------------- #
@@ -1521,6 +1785,116 @@ def _titulo(t):
     print("=" * 68)
 
 
+# --------------------------------------------------------------------------- #
+#  Elegir el documento de referencia
+# --------------------------------------------------------------------------- #
+#: Diálogo nativo de Windows. Se pilota desde PowerShell porque el Python
+#: portable (distribución "embeddable") no trae tkinter, y añadirlo obligaría
+#: a arrastrar Tcl/Tk dentro del .exe.
+_PS_ELEGIR = r"""
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Title  = 'Elija el documento de Word que se actualizara'
+$d.Filter = 'Documentos de Word (*.docx;*.docm;*.dotx)|*.docx;*.docm;*.dotx|Todos los archivos (*.*)|*.*'
+$d.Multiselect = $false
+$d.CheckFileExists = $true
+if ($args.Count -ge 1 -and $args[0] -and (Test-Path $args[0])) {
+  $d.InitialDirectory = $args[0]
+}
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  Write-Output ("ELEGIDO=" + $d.FileName)
+} else {
+  Write-Output "CANCELADO"
+}
+"""
+
+
+def elegir_archivo_word(carpeta_inicial=None):
+    """Abre el explorador de Windows filtrado a documentos de Word.
+
+    Devuelve la ruta elegida, o None si se cancela o si no hay entorno
+    gráfico (en cuyo caso el llamante debe pedirla por teclado).
+    """
+    import subprocess
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="fs_elegir_"))
+    script = tmp / "elegir.ps1"
+    script.write_text(_PS_ELEGIR, encoding="utf-8")
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-STA", "-File", str(script), str(carpeta_inicial or "")],
+            capture_output=True, text=True, timeout=600,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    for linea in (res.stdout or "").splitlines():
+        linea = linea.strip()
+        if linea.startswith("ELEGIDO="):
+            return Path(linea[len("ELEGIDO="):]).resolve()
+    return None
+
+
+def revisar_candidato(ruta):
+    """¿Sirve este archivo como documento base? Devuelve (ok, avisos, regiones)."""
+    import zipfile
+
+    ruta = Path(ruta)
+    avisos = []
+    if not ruta.exists():
+        return False, [f"No existe: {ruta}"], {}
+    if ruta.suffix.lower() not in (".docx", ".docm", ".dotx"):
+        avisos.append(f"La extensión '{ruta.suffix}' no es la de un documento de "
+                      f"Word moderno. Puede fallar.")
+    if not zipfile.is_zipfile(ruta):
+        return False, avisos + [
+            "No es un .docx válido (un .doc antiguo no sirve: ábralo en Word y",
+            "guárdelo como .docx)."], {}
+    try:
+        doc = Document(str(ruta))
+    except Exception as e:
+        return False, avisos + [f"Word no lo puede abrir: {type(e).__name__}: {e}"], {}
+
+    familias = {}
+    for tag in _indexar(doc):
+        fam, _, _ = C.descomponer(tag)
+        familias[fam] = familias.get(fam, 0) + 1
+
+    if not familias.get(C.FAM_TABLA):
+        avisos.append("Todavía no tiene las regiones del contrato: habrá que")
+        avisos.append("prepararlo una vez antes del primer refresco.")
+
+    culpables = quien_bloquea(ruta)
+    if culpables:
+        avisos.append("Está abierto ahora mismo: " + culpables[0])
+
+    return True, avisos, familias
+
+
+def fijar_documento_base(ruta_doc, verbose=True):
+    """Guarda el documento elegido en config.json, conservando el resto."""
+    import generador_fs as G
+
+    destino = G.CONFIG_PATH
+    datos = {}
+    if destino.exists():
+        try:
+            datos = json.loads(destino.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"{destino.name} tiene un error de sintaxis y no me atrevo a\n"
+                f"reescribirlo:\n  {e}"
+            )
+    datos["documento_base"] = str(Path(ruta_doc).resolve())
+    destino.write_text(
+        json.dumps(datos, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if verbose:
+        print(f"  Guardado en {destino.name}")
+    return destino
 # --------------------------------------------------------------------------- #
 #  Inspección del estado del proyecto
 # --------------------------------------------------------------------------- #
@@ -1905,6 +2279,91 @@ def main(argv):
         print("=" * 68)
         return 0
 
+    if orden == "apariencia":
+        modo = (args[1].lower() if len(args) > 1 else "")
+        if modo not in ("visible", "invisible"):
+            print("Uso: apariencia <doc.docx> <visible|invisible>")
+            print()
+            print("  visible    las cifras y la tabla llevan recuadro gris.")
+            print("             Se ve de un vistazo qué mantiene el Excel.")
+            print("  invisible  la cifra se lee como una palabra más del párrafo.")
+            print("             Sigue bloqueada y sigue refrescándose igual.")
+            return 1
+        bak = _respaldar(doc_ruta)
+        _titulo(f"APARIENCIA — {doc_ruta.name}")
+        aspecto = "boundingBox" if modo == "visible" else "hidden"
+        comprobar_escribible(doc_ruta)
+        doc = Document(str(doc_ruta))
+        n = normalizar_apariencia(doc, datos=aspecto)
+        guardar_seguro(doc, doc_ruta)
+        print(f"  Regiones ajustadas: {n}")
+        print(f"  Copia previa: {bak.name}")
+        print()
+        if modo == "invisible":
+            print(" Las cifras se leen ahora como texto normal del párrafo.")
+            print(" Siguen bloqueadas: nadie puede teclear encima sin desbloquear.")
+            print(" Para volver a verlas marcadas: apariencia <doc> visible")
+        else:
+            print(" Las cifras vuelven a mostrar su recuadro.")
+        print("=" * 68)
+        return 0
+
+    if orden == "simplificar":
+        bak = _respaldar(doc_ruta)
+        _titulo(f"SIMPLIFICAR — {doc_ruta.name}")
+        simplificar_documento(doc_ruta, quitar_prosa="--quitar-zonas" in flags)
+        print(f" Copia previa: {bak.name}")
+        print()
+        print(" Los recuadros de las zonas de redacción y de los metadatos")
+        print(" desaparecen. La tabla y las cifras conservan el suyo: es lo que")
+        print(" deja ver de un vistazo qué mantiene el Excel.")
+        if "--quitar-zonas" not in flags:
+            print()
+            print(" Para que las zonas de redacción dejen de existir del todo:")
+            print("     fs_documento.py simplificar <doc.docx> --quitar-zonas")
+        print("=" * 68)
+        return 0
+
+    if orden in ("desbloquear", "bloquear"):
+        abrir = orden == "desbloquear"
+        solo = args[1] if len(args) > 1 else None
+        bak = _respaldar(doc_ruta)
+        _titulo(("DESBLOQUEAR" if abrir else "BLOQUEAR") + f" — {doc_ruta.name}")
+        cambiar_candado(doc_ruta, bloquear=not abrir, solo=solo)
+        print(f" Copia previa: {bak.name}")
+        if abrir:
+            print()
+            print(" Ya puede teclear encima de las cifras en Word.")
+            print()
+            print(" AVISO — lo que escriba a mano lo MACHACA el siguiente refresco:")
+            print("         la región sigue vinculada al Excel. Si quiere que un")
+            print("         valor escrito a mano sobreviva, desvincúlelo:")
+            print("             fs_documento.py desvincular <doc> <clave>")
+            print()
+            print(" Para volver a proteger: fs_documento.py bloquear <doc>")
+        else:
+            print()
+            print(" Las cifras vuelven a ser intocables a mano en Word.")
+        print("=" * 68)
+        return 0
+
+    if orden == "desvincular":
+        if len(args) < 2:
+            print("Uso: desvincular <doc.docx> <clave-o-etiqueta>")
+            print("     ejemplos:  total_assets        fs-dato-total_assets-actual")
+            print("     ver las que hay:  fs_documento.py verificar <doc.docx>")
+            return 1
+        bak = _respaldar(doc_ruta)
+        _titulo(f"DESVINCULAR — {doc_ruta.name}")
+        quitadas = desvincular_region(doc_ruta, args[1])
+        print(f" Copia previa: {bak.name}")
+        if quitadas:
+            print()
+            print(" Ese texto ya NO se refresca: es prosa normal y se edita como tal.")
+            print(" Para volver a vincularlo: fs_documento.py insertar <doc> <clave> <campo>")
+        print("=" * 68)
+        return 0
+
     if orden == "limpiar-bitacora":
         bak = _respaldar(doc_ruta)
         _titulo(f"LIMPIAR BITÁCORA — {doc_ruta.name}")

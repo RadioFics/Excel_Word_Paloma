@@ -135,6 +135,10 @@ DEFAULTS = {
     "bitacora": "archivo",
     # Ruta del .log. Vacío = salidas\bitacora_<documento>.log
     "bitacora_archivo": "",
+    # Aspecto de las regiones de datos en Word:
+    #   "boundingBox" -> recuadro gris (se ve qué mantiene el Excel)
+    #   "hidden"      -> la cifra se lee como texto normal del párrafo
+    "apariencia_datos": "boundingBox",
 }
 
 
