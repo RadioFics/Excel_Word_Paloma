@@ -23,7 +23,8 @@ borrada, porque el motor nunca la vuelve a inyectar.
     python fs_documento.py bloquear    <doc.docx> [clave]
     python fs_documento.py desvincular <doc.docx> <clave>
     python fs_documento.py simplificar <doc.docx> [--quitar-zonas]
-    python fs_documento.py apariencia  <doc.docx> <visible|invisible>
+    python fs_documento.py apariencia  <doc.docx> <visible|invisible>
+    python fs_documento.py proteger    <doc.docx> --clave X [--salvo-datos]
     python fs_documento.py plantilla  <destino.docx>
     python fs_documento.py proteger   <doc.docx> --clave <clave>
     python fs_documento.py desproteger <doc.docx>
@@ -1453,6 +1454,44 @@ def _hash_proteccion(clave_, salt, vueltas=100000):
     return h
 
 
+def _poner_documentProtection(doc, clave_):
+    """Marca el documento como solo lectura, con la clave dada.
+
+    Es la protección que Word IMPONE de verdad. El candado por región
+    (w:lock) es una comodidad de la interfaz: Buscar y reemplazar lo
+    atraviesa, y Word en el navegador ni lo mira.
+    """
+    settings = doc.settings.element
+    for viejo in settings.findall(qn("w:documentProtection")):
+        settings.remove(viejo)
+
+    salt = os.urandom(16)
+    prot = OxmlElement("w:documentProtection")
+    prot.set(qn("w:edit"), "readOnly")
+    prot.set(qn("w:enforcement"), "1")
+    prot.set(qn("w:cryptProviderType"), "rsaFull")
+    prot.set(qn("w:cryptAlgorithmClass"), "hash")
+    prot.set(qn("w:cryptAlgorithmType"), "typeAny")
+    prot.set(qn("w:cryptAlgorithmSid"), "4")
+    prot.set(qn("w:cryptSpinCount"), "100000")
+    prot.set(qn("w:hash"), base64.b64encode(_hash_proteccion(clave_, salt)).decode())
+    prot.set(qn("w:salt"), base64.b64encode(salt).decode())
+
+    pos = _ORDEN_SETTINGS.index("documentProtection")
+    posteriores = set(_ORDEN_SETTINGS[pos + 1:])
+    ancla = None
+    for hijo in settings:
+        nombre = hijo.tag.split("}")[-1]
+        if nombre in posteriores or nombre not in _ORDEN_SETTINGS:
+            ancla = hijo
+            break
+    if ancla is not None:
+        ancla.addprevious(prot)
+    else:
+        settings.append(prot)
+
+
+
 def proteger(ruta, clave_, verbose=True):
     """Deja el documento en solo lectura salvo las zonas fs-prosa-*.
 
@@ -1483,41 +1522,98 @@ def proteger(ruta, clave_, verbose=True):
         cont.append(fin)
 
     # 2. protección global
-    settings = doc.settings.element
-    for viejo in settings.findall(qn("w:documentProtection")):
-        settings.remove(viejo)
-
-    salt = os.urandom(16)
-    prot = OxmlElement("w:documentProtection")
-    prot.set(qn("w:edit"), "readOnly")
-    prot.set(qn("w:enforcement"), "1")
-    prot.set(qn("w:cryptProviderType"), "rsaFull")
-    prot.set(qn("w:cryptAlgorithmClass"), "hash")
-    prot.set(qn("w:cryptAlgorithmType"), "typeAny")
-    prot.set(qn("w:cryptAlgorithmSid"), "4")
-    prot.set(qn("w:cryptSpinCount"), "100000")
-    prot.set(qn("w:hash"), base64.b64encode(_hash_proteccion(clave_, salt)).decode())
-    prot.set(qn("w:salt"), base64.b64encode(salt).decode())
-
-    pos = _ORDEN_SETTINGS.index("documentProtection")
-    posteriores = set(_ORDEN_SETTINGS[pos + 1:])
-    ancla = None
-    for hijo in settings:
-        nombre = hijo.tag.split("}")[-1]
-        if nombre in posteriores or nombre not in _ORDEN_SETTINGS:
-            ancla = hijo
-            break
-    if ancla is not None:
-        ancla.addprevious(prot)
-    else:
-        settings.append(prot)
-
+    _poner_documentProtection(doc, clave_)
     guardar_seguro(doc, ruta)
     if verbose:
         print(f"  Protegido. Zonas de prosa editables: {n}")
     return n
 
 
+def _dentro_de_region(el):
+    """¿Este bloque cuelga de algún control de contenido?"""
+    nodo = el.getparent()
+    while nodo is not None:
+        if nodo.tag == qn("w:sdt"):
+            return True
+        nodo = nodo.getparent()
+    return False
+
+
+def _es_region_datos(el):
+    if el.tag != qn("w:sdt"):
+        return False
+    familia, _, _ = C.descomponer(_tag_de(el))
+    return familia in FAMILIAS_DATOS
+
+
+def proteger_salvo_datos(ruta, clave_, verbose=True):
+    """Solo lectura EXCEPTO todo lo que no sea una cifra.
+
+    Es la vuelta del revés de proteger(): en vez de abrir huecos en las
+    zonas de redacción, abre huecos en TODO menos en la tabla, los campos y
+    las cifras intercaladas. Resultado: se escribe donde se quiera, y los
+    números son intocables de verdad.
+
+    Hace falta porque el candado de región (w:lock) es una comodidad de la
+    interfaz, no una protección: Buscar y reemplazar lo atraviesa, y Word
+    en el navegador ni lo mira. documentProtection sí lo impone Word.
+    """
+    comprobar_escribible(ruta)
+    doc = Document(str(ruta))
+    cuerpo = doc.element.body
+
+    # quitar rangos editables anteriores para no acumularlos
+    for viejo in list(cuerpo.iter(qn("w:permStart"))) + list(cuerpo.iter(qn("w:permEnd"))):
+        padre = viejo.getparent()
+        if padre is not None:
+            padre.remove(viejo)
+
+    sect = cuerpo.find(qn("w:sectPr"))
+
+    # Un párrafo libre de cierre. Sin él, si el documento termina en la
+    # tabla o en los metadatos, el último punto del documento cae fuera de
+    # todo rango editable y el redactor no puede añadir un párrafo al final.
+    hijos = [h for h in cuerpo if h is not sect]
+    ultimo = hijos[-1] if hijos else None
+    if ultimo is None or ultimo.tag != qn("w:p") or _dentro_de_region(ultimo):
+        cierre = _parrafo()
+        if sect is not None:
+            sect.addprevious(cierre)
+        else:
+            cuerpo.append(cierre)
+
+    hijos = [h for h in cuerpo if h is not sect]
+
+    # agrupar tramos consecutivos que NO son regiones de datos
+    tramos, actual = [], []
+    for el in hijos:
+        if _es_region_datos(el):
+            if actual:
+                tramos.append(actual)
+                actual = []
+        else:
+            actual.append(el)
+    if actual:
+        tramos.append(actual)
+
+    n = 0
+    for tramo in tramos:
+        n += 1
+        ini = OxmlElement("w:permStart")
+        ini.set(qn("w:id"), str(n))
+        ini.set(qn("w:edGrp"), "everyone")
+        fin = OxmlElement("w:permEnd")
+        fin.set(qn("w:id"), str(n))
+        tramo[0].addprevious(ini)
+        tramo[-1].addnext(fin)
+
+    _poner_documentProtection(doc, clave_)
+    guardar_seguro(doc, ruta)
+    if verbose:
+        print(f"  Tramos de escritura libre: {n}")
+        print(f"  Regiones de datos protegidas: "
+              f"{sum(1 for h in hijos if _es_region_datos(h))}")
+    return n
 def desproteger(ruta, verbose=True):
     comprobar_escribible(ruta)
     doc = Document(str(ruta))
@@ -2415,9 +2511,17 @@ def main(argv):
             return 1
         bak = _respaldar(doc_ruta)
         _titulo(f"PROTECCIÓN — {doc_ruta.name}")
-        proteger(doc_ruta, clave_)
+        if "--salvo-datos" in flags:
+            proteger_salvo_datos(doc_ruta, clave_)
+        else:
+            proteger(doc_ruta, clave_)
         print(f" Copia previa: {bak.name}")
-        print(" Rol Redactor: solo puede escribir dentro de las zonas fs-prosa-*.")
+        if "--salvo-datos" in flags:
+            print(" Se puede escribir en TODO el documento MENOS en la tabla, los")
+            print(" campos y las cifras. Esta protección la impone Word de verdad:")
+            print(" ni Buscar y reemplazar ni Word en el navegador la saltan.")
+        else:
+            print(" Rol Redactor: solo puede escribir dentro de las zonas fs-prosa-*.")
         print("=" * 68)
         return 0
 

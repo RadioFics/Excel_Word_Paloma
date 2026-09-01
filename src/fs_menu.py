@@ -460,7 +460,15 @@ def ejecutar(argv):
         abrir = eleccion == "4"
         D._respaldar(documento)
         print()
-        D.cambiar_candado(documento, bloquear=not abrir)
+        if abrir:
+            D.desproteger(documento)
+            D.cambiar_candado(documento, bloquear=False)
+        else:
+            # Candado de region + proteccion de documento. El candado solo no
+            # basta: Buscar y reemplazar lo atraviesa y Word en el navegador
+            # ni lo mira.
+            D.cambiar_candado(documento, bloquear=True)
+            D.proteger_salvo_datos(documento, str(cfg.get("clave_proteccion") or "fs"))
         print()
         if abrir:
             print(" Ya puede teclear encima de las cifras en Word.")
@@ -469,7 +477,9 @@ def ejecutar(argv):
             print("        (clic derecho sobre el recuadro en Word -> Quitar control")
             print("        de contenido).")
         else:
-            print(" Las cifras vuelven a ser intocables a mano en Word.")
+            print(" Las cifras son intocables: ni tecleando, ni con Buscar y")
+            print(" reemplazar, ni desde Word en el navegador.")
+            print(" La redacción sigue libre en todo el documento.")
         return 0
 
     # Opción no listada en el menú: diagnóstico para quien da soporte.

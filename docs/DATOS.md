@@ -521,6 +521,38 @@ Dos avisos concretos:
 
 ---
 
+## Por qué hacían falta DOS candados
+
+El candado de región (`w:lock`) es una **comodidad de la interfaz de Word**,
+no una protección. Lo medí sobre un documento con las cifras bloqueadas:
+
+| Intento | Solo con el candado | Con protección de documento |
+|---|---|---|
+| Teclear en una celda de la tabla | bloqueado | bloqueado |
+| Teclear en un campo de encabezado | bloqueado | bloqueado |
+| Borrar una fila entera | bloqueado | bloqueado |
+| Seleccionar todo y escribir encima | bloqueado | bloqueado |
+| **Buscar y reemplazar** | **PASA** | bloqueado |
+| **Word en el navegador** | **no lo mira** | lo respeta |
+
+Por eso la opción «Volver a proteger las cifras» hace las dos cosas: pone el
+candado a cada región **y** marca el documento como solo lectura dejando
+libre todo lo que no sea una cifra.
+
+Así queda:
+
+- se escribe en cualquier parte del documento
+- las cifras y la tabla son intocables de verdad
+- Buscar y reemplazar no las alcanza
+- Word en el navegador tampoco
+
+La clave de esa protección sale de `config.json` -> `clave_proteccion`
+(por defecto `fs`). No es un secreto: solo evita ediciones accidentales.
+Para quitarla a mano en Word: **Revisar -> Restringir edición -> Suspender
+la protección**.
+
+---
+
 ## Los dos candados, que no son lo mismo
 
 Es fácil confundirlos:
