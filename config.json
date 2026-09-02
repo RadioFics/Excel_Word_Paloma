@@ -1,14 +1,10 @@
 {
   "_comentario": "Todo es opcional. Borre una clave para usar su valor por defecto. 'primera_fila': un numero fija la fila de inicio; 'auto' la detecta. 'columnas': letras (A, C, E, F, G) para forzar una columna; null para detectarla por contenido.",
-
-  "_documento_base": "Documento de Word que actualiza refrescar.bat / RefrescarFS.exe, conservando la redaccion. Ruta absoluta, o relativa a esta carpeta. Vacio = hay que indicarlo en cada orden. El generador clasico (generar.bat) lo ignora: ese siempre crea un Word nuevo en salidas\\.",
-  "documento_base": "C:\\Users\\JuanEstebanCalle\\OneDrive - Collective Mining C-Suite\\DOCUMENTO DE PRUEBA DE EDICIÓN\u00a0- PAMELA.docx",
-
+  "_documento_base": "Documento de Word que actualiza refrescar.bat / RefrescarFS.exe, conservando la redaccion. NO lo fije aqui: este archivo viaja por git y una ruta absoluta se le impondria a la otra maquina en cada pull. Uselo desde la opcion 3 («Cambiar el documento»), que lo guarda en config.local.json. Si aun asi quiere compartirlo, use marcadores independientes del equipo: ${ONEDRIVE}\\carpeta\\EF.docx, ${USUARIO}\\... o ${PROYECTO}\\...",
+  "documento_base": "",
   "_prefijo_rangos": "Prefijo de los nombres de Excel que dan identidad estable a cada fila (fs_total_assets). Crearlos: fs_documento.py nombrar <libro> --aplicar",
   "prefijo_rangos": "fs_",
-
   "empresa": "Collective Mining Ltd.",
-
   "hoja": "FS",
   "hoja_marcadores": [
     "situación financiera",
@@ -19,12 +15,9 @@
     "assets",
     "liabilities and equity"
   ],
-
   "plantilla": "plantilla_estado_situacion_financiera.docx",
   "buscar_por_convencion": "FS",
-
   "primera_fila": "auto",
-
   "columnas": {
     "etiqueta": null,
     "nota": null,
@@ -32,6 +25,10 @@
     "previo": null,
     "tipo": null
   },
-
-  "marcadores_excluir": ["control check", "check", "cuadre", "balance check"]
+  "marcadores_excluir": [
+    "control check",
+    "check",
+    "cuadre",
+    "balance check"
+  ]
 }

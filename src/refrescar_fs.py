@@ -116,6 +116,8 @@ def ejecutar(argv):
     if len(inf["cambios"]) > 20:
         print(D.imprimible(f"   • … y {len(inf['cambios']) - 20} más (están en la bitácora del documento)."))
     print("=" * 68)
+    # Para que fs_menu pueda ofrecer «Abrir el documento» al terminar.
+    return documento
 
 
 def main():

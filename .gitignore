@@ -37,3 +37,8 @@ Thumbs.db
 
 # Temporal de la escritura atomica (se reemplaza de un golpe al terminar)
 .*.tmp.docx
+
+# Ajustes de ESTE equipo (rutas absolutas, documento base). NO se versiona:
+# config.json si viaja por git, y una ruta de una maquina escrita ahi se le
+# impone a la otra en cada pull.
+/config.local.json

@@ -50,6 +50,7 @@ Uso
 Doble clic (Windows): use generar.bat.
 """
 import sys
+import os
 import re
 import json
 import csv
@@ -87,6 +88,12 @@ else:
 SALIDAS = BASE / "salidas"
 CONFIG_PATH = BASE / "config.json"            # config externa opcional (junto al .exe)
 CONFIG_EMBEBIDA = RECURSOS / "config.json"    # config por defecto embebida
+
+#: Ajustes de ESTE equipo. No se versiona (ver .gitignore) y gana sobre todo
+#: lo demas. Existe porque config.json sí viaja por git: si ahí dentro hay
+#: una ruta absoluta de una máquina, cada «git pull» la impone en la otra y
+#: las dos se pisan para siempre. Todo lo que dependa del equipo va aquí.
+CONFIG_LOCAL = BASE / "config.local.json"
 
 #: Subcarpetas donde se buscan los recursos cuando el proyecto está
 #: desplegado como código. Dentro del .exe todo queda plano en _MEIPASS,
@@ -231,44 +238,153 @@ def _fusionar_config(cfg, ruta):
 
 
 def cargar_config():
+    """Los ajustes, de menos a más prioritario.
+
+    El orden importa: lo de este equipo (config.local.json) tiene que poder
+    ganarle a lo que venga por git, o cada «pull» reimpondria las rutas de
+    la otra máquina.
+    """
     cfg = json.loads(json.dumps(DEFAULTS))  # copia profunda
     _fusionar_config(cfg, CONFIG_EMBEBIDA)          # 1) config embebida en el .exe
     if CONFIG_PATH != CONFIG_EMBEBIDA:
-        _fusionar_config(cfg, CONFIG_PATH)          # 2) config externa junto al .exe (gana)
+        _fusionar_config(cfg, CONFIG_PATH)          # 2) config del proyecto (viaja por git)
+    if CONFIG_LOCAL != CONFIG_EMBEBIDA:
+        _fusionar_config(cfg, CONFIG_LOCAL)         # 3) este equipo (no se versiona)
     return cfg
+
+
+def raiz_onedrive():
+    """La carpeta de OneDrive de empresa de este equipo, o None.
+
+    No sirve la variable de entorno %OneDrive% a secas: en un equipo con las
+    dos cuentas apunta a la PERSONAL ('C:\\Users\\x\\OneDrive'), no a la de
+    la organizacion ('C:\\Users\\x\\OneDrive - Empresa'), que es donde vive
+    el documento. Se prefiere siempre la de empresa.
+    """
+    casa = Path.home()
+    empresa = sorted(p for p in casa.glob("OneDrive - *") if p.is_dir())
+    if empresa:
+        return empresa[0]
+    for var in ("OneDriveCommercial", "OneDrive", "OneDriveConsumer"):
+        v = os.environ.get(var)
+        if v and Path(v).is_dir():
+            return Path(v)
+    suelta = casa / "OneDrive"
+    return suelta if suelta.is_dir() else None
+
+
+def expandir_ruta(crudo):
+    """Convierte una ruta de config.json en algo válido en ESTE equipo.
+
+    Entiende marcadores que no dependen de la máquina, para que la misma
+    config sirva en todas:
+
+        ${ONEDRIVE}\\Informes\\EF.docx   -> el OneDrive de empresa de aquí
+        ${USUARIO}\\Documentos\\EF.docx  -> la carpeta del usuario actual
+        ${PROYECTO}\\plantillas\\x.docx  -> la carpeta del proyecto/.exe
+        ~\\Documentos\\EF.docx           -> igual que ${USUARIO}
+
+    Una ruta normal se devuelve tal cual: nada de esto es obligatorio.
+    """
+    s = str(crudo or "").strip()
+    if not s:
+        return s
+    onedrive = raiz_onedrive()
+    reemplazos = {
+        "${ONEDRIVE}": str(onedrive) if onedrive else str(Path.home()),
+        "${USUARIO}": str(Path.home()),
+        "${USERPROFILE}": str(Path.home()),
+        "${PROYECTO}": str(BASE),
+    }
+    for marca, valor in reemplazos.items():
+        if marca.lower() in s.lower():
+            # sin distinguir mayusculas: nadie deberia fallar por escribir
+            # ${onedrive} en minuscula
+            i = s.lower().index(marca.lower())
+            s = s[:i] + valor + s[i + len(marca):]
+    if s.startswith("~"):
+        s = str(Path.home()) + s[1:]
+    return s
+
+
+def compactar_ruta(ruta):
+    """La inversa: sustituye la parte dependiente del equipo por su marcador.
+
+    Se usa al GUARDAR el documento elegido, para que lo que quede escrito
+    valga también en la otra máquina.
+    """
+    ruta = Path(ruta)
+    onedrive = raiz_onedrive()
+    for marca, raiz in (("${ONEDRIVE}", onedrive), ("${USUARIO}", Path.home())):
+        if raiz is None:
+            continue
+        try:
+            return marca + "\\" + str(ruta.relative_to(raiz))
+        except ValueError:
+            continue
+    return str(ruta)
 
 
 # --------------------------------------------------------------------------- #
 #  Elección de la hoja
 # --------------------------------------------------------------------------- #
-def _elegir_hoja_por_contenido(wb, cfg):
+#: Cuántas señales de contenido bastan para dar una hoja por buena.
+UMBRAL_HOJA = 2
+
+
+def _texto_de_hoja(ws, max_filas=120, max_cols=60):
+    """El texto de la hoja, en una sola cadena normalizada.
+
+    La ventana es ancha a propósito: antes se miraban 60 filas por 8
+    columnas, y una tabla movida a K14 caía entera fuera. La hoja se
+    puntuaba con cero señales y se descartaba, aunque fuese la buena.
+    """
+    try:
+        return " ".join(
+            _norm(v)
+            for fila in ws.iter_rows(max_row=max_filas, max_col=max_cols,
+                                     values_only=True)
+            for v in fila
+            if _texto_no_vacio(v)
+        )
+    except Exception:
+        return ""
+
+
+def puntuar_hoja(ws, cfg, nombre=None):
+    """Cuánto se parece esta hoja a un estado de situación financiera.
+
+    Puntúa por lo que la hoja CONTIENE ('Total assets', 'ASSETS', 'Situación
+    Financiera'…). El nombre solo suma medio punto: es una pista, no la
+    prueba. Así la hoja buena se reconoce aunque la renombren, y una hoja
+    que se llame como toca pero no tenga la forma no se cuela.
+    """
     marcadores = [_norm(m) for m in cfg["hoja_marcadores"] if _norm(m)]
+    texto_hoja = _texto_de_hoja(ws)
+    if not texto_hoja:
+        return 0.0
+
+    score = float(sum(1 for m in marcadores if m in texto_hoja))
     convencion = _norm(cfg.get("buscar_por_convencion"))
+    if convencion and convencion in _norm(nombre or getattr(ws, "title", "")):
+        score += 0.5
+    try:
+        if getattr(ws, "sheet_state", "visible") == "visible":
+            score += 0.5
+    except Exception:
+        pass
+    return score
+
+
+def _elegir_hoja_por_contenido(wb, cfg):
     mejor_nombre, mejor_score = None, 0
 
     for nombre in wb.sheetnames:
-        ws = wb[nombre]
-        try:
-            texto_hoja = " ".join(
-                _norm(v)
-                for fila in ws.iter_rows(max_row=60, max_col=8, values_only=True)
-                for v in fila
-                if _texto_no_vacio(v)
-            )
-        except Exception:
-            continue
-        score = sum(1 for m in marcadores if m in texto_hoja)
-        if convencion and convencion in _norm(nombre):
-            score += 1
-        try:
-            if getattr(ws, "sheet_state", "visible") == "visible":
-                score += 0.5
-        except Exception:
-            pass
+        score = puntuar_hoja(wb[nombre], cfg, nombre)
         if score > mejor_score:
             mejor_nombre, mejor_score = nombre, score
 
-    if mejor_nombre is not None and mejor_score >= 2:
+    if mejor_nombre is not None and mejor_score >= UMBRAL_HOJA:
         return mejor_nombre, f"'{mejor_nombre}' elegida por contenido ({mejor_score:g} señales)"
 
     raise ValueError(
@@ -284,7 +400,18 @@ def _elegir_hoja_por_contenido(wb, cfg):
 #  Materialización de la hoja elegida (una sola pasada)
 # --------------------------------------------------------------------------- #
 def _materializar(ws, cfg):
-    max_filas, max_cols = cfg["max_filas_scan"], cfg["max_cols_scan"]
+    # Los limites de config dejan de ser un TOPE y pasan a ser un MINIMO: se
+    # barre al menos eso, y ademas todo lo que la hoja diga que ocupa.
+    #
+    # Antes eran un tope fijo (16 columnas). En cuanto alguien movia la
+    # tabla a la derecha —K14, por ejemplo— la columna 'Tipo' caia fuera del
+    # barrido y los tipos declarados desaparecian sin un solo aviso: el
+    # programa volvia a adivinarlos como si la columna no existiera.
+    #
+    # Los topes de seguridad evitan que una hoja con basura en la celda
+    # XFD1048576 obligue a materializar un millon de filas.
+    max_filas = max(int(cfg["max_filas_scan"]), min(ws.max_row or 1, 20000))
+    max_cols = max(int(cfg["max_cols_scan"]), min(ws.max_column or 1, 256))
     valores = [[None] * (max_cols + 1)]
     negrita = [[False] * (max_cols + 1)]
     for fila in ws.iter_rows(min_row=1, max_row=max_filas, max_col=max_cols):
@@ -314,8 +441,14 @@ def detectar_columnas(valores, cfg, n_filas, max_cols):
     forzado = {k: _col_por_letra(v) for k, v in cfg["columnas"].items()}
     col = dict(forzado)
 
-    # 1. encabezados explícitos en las primeras filas
-    for r in range(1, min(8, n_filas) + 1):
+    # 1. rótulos explícitos ('Tipo', 'Note'), estén donde estén
+    #
+    # Se busca en TODA la altura barrida, no en las 8 primeras filas: si la
+    # tabla no arranca arriba del todo, esos rotulos quedaban fuera y la
+    # columna 'Tipo' se daba por inexistente. El resultado era mudo y
+    # peligroso: todos los tipos volvian a inferirse como si nunca se
+    # hubieran declarado. Gana la coincidencia mas alta de la hoja.
+    for r in range(1, n_filas + 1):
         for c in range(1, max_cols + 1):
             t = _norm(valores[r][c])
             if not t:
@@ -393,8 +526,16 @@ def detectar_region(valores, cols, cfg, n_filas):
     if isinstance(pf, int) and pf > 0:
         primera = pf
     else:
+        # El bloque de cabecera se localiza por contenido; los datos
+        # empiezan justo detrás. Antes esto era «las filas 1 a 4 son
+        # cabecera», y una tabla que no empezara arriba del todo metía sus
+        # propias fechas y su fila de unidades dentro de la tabla del Word.
+        hdr = detectar_encabezado(valores, cols, n_filas)
+        arranque = max(1, hdr.get("fin", 0) + 1)
+        reconocido = hdr.get("fin", 0) > 0
+
         primera = None
-        for r in range(1, n_filas + 1):
+        for r in range(arranque, n_filas + 1):
             et = valores[r][ce]
             va = valores[r][ca] if ca else None
             vp = valores[r][cp] if cp else None
@@ -402,11 +543,14 @@ def detectar_region(valores, cols, cfg, n_filas):
                 continue
             if _norm(et) in ("", "$"):
                 continue
-            if r > 4 or _es_numero(va) or _es_numero(vp):
+            # Si no se reconoció ningún bloque de cabecera se conserva la
+            # regla de siempre, para no cambiarle el resultado a una hoja
+            # que hoy funciona.
+            if reconocido or r > 4 or _es_numero(va) or _es_numero(vp):
                 primera = r
                 break
         if primera is None:
-            primera = 5
+            primera = arranque if reconocido else 5
 
     ultima = primera
     for r in range(primera, n_filas + 1):
@@ -420,25 +564,123 @@ def detectar_region(valores, cols, cfg, n_filas):
 # --------------------------------------------------------------------------- #
 #  Encabezado (título, fechas, unidad, moneda)
 # --------------------------------------------------------------------------- #
-def leer_encabezado(valores, cols, cfg, primera):
-    ce, ca, cp = cols["etiqueta"], cols["actual"], cols["previo"]
-    filas_hdr = list(range(1, max(primera, 2)))
+#: Nombres de mes en los dos idiomas del libro. Sirven para reconocer una
+#: fila de fechas ("June 5,", "31 de diciembre") sin saber donde esta.
+_MESES = (
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+)
 
-    def celda(c, offset):
-        r = 1 + offset
-        if c and 0 < r < primera and r < len(valores):
-            return valores[r][c]
+
+def _es_fecha_cabecera(v):
+    from datetime import date, datetime
+    if isinstance(v, (datetime, date)):
+        return True
+    if not isinstance(v, str):
+        return False
+    s = _norm(v)
+    if not s:
+        return False
+    if any(m in s for m in _MESES):
+        return True
+    if re.search(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}", s):
+        return True
+    return bool(re.search(r"\b(19|20)\d{2}\b", s))
+
+
+def _es_escala_cabecera(v):
+    """La fila de la unidad: 1000, 1000000, 'in thousands'…"""
+    if _es_numero(v):
+        return float(v) in (100.0, 1000.0, 10000.0, 1000000.0)
+    if isinstance(v, str):
+        return any(p in _norm(v) for p in
+                   ("thousand", "million", "miles", "millones", "millon"))
+    return False
+
+
+def _es_estado_cabecera(v):
+    """(Unaudited) / (Audited) / (No auditado)…"""
+    return isinstance(v, str) and "audit" in _norm(v)
+
+
+def _es_moneda_cabecera(v):
+    if not isinstance(v, str):
+        return False
+    s = v.strip().strip("()").strip()
+    if not s or len(s) > 6:
+        return False
+    return bool(re.fullmatch(r"[$€£¥]|[A-Za-z]{0,3}\$|USD|COP|CAD|EUR|MXN|GBP",
+                             s, re.IGNORECASE))
+
+
+def detectar_encabezado(valores, cols, n_filas):
+    """En qué fila está cada dato de la cabecera. Por CONTENIDO, no por sitio.
+
+    Antes se leían las filas 1, 2, 3 y 4 de la hoja, en ese orden fijo. En
+    cuanto alguien movía la tabla —a K14, por ejemplo— esas cuatro celdas
+    quedaban vacías y el documento salía con «Al () — comparado con ()» y
+    «Cifras expresadas en , en unidades de».
+
+    Devuelve {'fechas': fila, 'escala': fila, 'estado': fila, 'moneda': fila,
+    'fin': última fila del bloque}. 'fin' es 0 si no se reconoció ninguna:
+    entonces el llamante se queda con la heurística de siempre.
+    """
+    ce, ca, cp = cols["etiqueta"], cols["actual"], cols["previo"]
+    hallado, fin = {}, 0
+
+    for r in range(1, n_filas + 1):
+        va = valores[r][ca] if ca else None
+        vp = valores[r][cp] if cp else None
+        etq = valores[r][ce] if ce else None
+
+        clase = None
+        if _es_fecha_cabecera(va) or _es_fecha_cabecera(vp):
+            clase = "fechas"
+        elif _es_escala_cabecera(va) and not _texto_no_vacio(etq):
+            # sin etiqueta: si no, un importe de 1.000 en una linea de
+            # detalle se confundiria con la fila de la unidad
+            clase = "escala"
+        elif _es_estado_cabecera(va) or _es_estado_cabecera(vp):
+            clase = "estado"
+        elif _es_moneda_cabecera(va) or _es_moneda_cabecera(vp):
+            clase = "moneda"
+
+        if clase:
+            hallado.setdefault(clase, r)
+            fin = max(fin, r)
+            continue
+
+        # Una fila con etiqueta Y cifras de verdad ya es un dato: el bloque
+        # de cabecera se acabó. Las filas de seccion (texto sin cifras) no
+        # cortan: pueden ir intercaladas antes del primer importe.
+        if _texto_no_vacio(etq) and (_es_numero(va) or _es_numero(vp)):
+            break
+
+    hallado["fin"] = fin
+    return hallado
+
+
+def leer_encabezado(valores, cols, cfg, primera, hdr=None):
+    ce, ca, cp = cols["etiqueta"], cols["actual"], cols["previo"]
+    hdr = hdr or {}
+
+    def celda(clase, col):
+        r = hdr.get(clase)
+        if r and col and 0 < r < len(valores):
+            return valores[r][col]
         return None
 
     return {
         "empresa": cfg["empresa"],
-        "titulo": _primer_texto(valores, ce, filas_hdr) or "",
-        "fecha_actual": celda(ca, 0) or "",
-        "fecha_previa": celda(cp, 0) or "",
-        "miles": celda(ca, 1) or "",
-        "estado_actual": texto(celda(ca, 2)),
-        "estado_previo": texto(celda(cp, 2)),
-        "moneda": celda(ca, 3) or "",
+        "titulo": _primer_texto(valores, ce, range(1, max(primera, 2))) or "",
+        "fecha_actual": celda("fechas", ca) or "",
+        "fecha_previa": celda("fechas", cp) or "",
+        "miles": celda("escala", ca) or "",
+        "estado_actual": texto(celda("estado", ca)),
+        "estado_previo": texto(celda("estado", cp)),
+        "moneda": celda("moneda", ca) or "",
     }
 
 
@@ -677,21 +919,40 @@ def leer_rangos_con_nombre(wb, hoja_titulo, cfg):
 def leer_contexto(ruta_xlsx, cfg):
     wb = load_workbook(ruta_xlsx, data_only=True, read_only=True)
     try:
+        # El nombre de config.json es una PISTA que se comprueba, no una
+        # orden. Se mira primero la hoja que se llama así, pero solo se
+        # acepta si además tiene forma de estado de situación financiera. Si
+        # no la tiene —o si no existe— se elige por contenido. Así el libro
+        # sigue funcionando aunque renombren la hoja, y una hoja que se
+        # llame 'FS' sin serlo no arrastra al resto.
         objetivo = cfg["hoja"]
+        nombre = como_hoja = None
         if objetivo and objetivo in wb.sheetnames:
-            ws = wb[objetivo]
-            como_hoja = f"'{objetivo}' por nombre exacto"
-        else:
+            puntos = puntuar_hoja(wb[objetivo], cfg, objetivo)
+            if puntos >= UMBRAL_HOJA:
+                nombre = objetivo
+                como_hoja = (f"'{objetivo}' por nombre, confirmada por su "
+                             f"contenido ({puntos:g} señales)")
+        if nombre is None:
             nombre, como_hoja = _elegir_hoja_por_contenido(wb, cfg)
-            wb.close()
-            wb = load_workbook(ruta_xlsx, data_only=True, read_only=True)
-            ws = wb[nombre]
+
+        wb.close()
+        wb = load_workbook(ruta_xlsx, data_only=True, read_only=True)
+        ws = wb[nombre]
 
         hoja_titulo = ws.title
         valores, negrita, n_filas = _materializar(ws, cfg)
-        cols = detectar_columnas(valores, cfg, n_filas, cfg["max_cols_scan"])
+        # El ancho REAL de lo materializado, no el de config: _materializar
+        # amplia el barrido hasta donde llegue la hoja, y si aqui se volviera
+        # a pasar cfg["max_cols_scan"] la deteccion se quedaria ciega
+        # justamente en las columnas recien ganadas.
+        ancho = len(valores[0]) - 1
+        cols = detectar_columnas(valores, cfg, n_filas, ancho)
         primera, ultima = detectar_region(valores, cols, cfg, n_filas)
-        ctx = leer_encabezado(valores, cols, cfg, primera)
+        # La misma lectura por contenido que usa detectar_region, para que
+        # las fechas y la moneda salgan de donde esten de verdad.
+        hdr = detectar_encabezado(valores, cols, n_filas)
+        ctx = leer_encabezado(valores, cols, cfg, primera, hdr)
         hay_col_tipo = cols["tipo"] is not None
         (lineas, revision, sin_tipo, tipo_invalido,
          n_declarados, n_inferidos) = construir_lineas(
@@ -861,6 +1122,10 @@ def ejecutar(argv):
             print(f"   Fila {r}: '{t}'  (válidos: H, I, S, T, N, X)")
 
     print("=" * 64)
+    # El llamante (fs_menu) lo necesita para ofrecer «Abrir la carpeta»:
+    # el archivo se crea en salidas\ JUNTO AL .exe, que no siempre es donde
+    # el usuario cree que está.
+    return destino
 
 
 def _pausa():

@@ -24,6 +24,8 @@ Uso
     python fs_menu.py --bloquear                 vuelve a protegerlas
     python fs_menu.py --consola                  menú de texto, sin ventana
 """
+import contextlib
+import io
 import shutil
 import sys
 import traceback
@@ -51,6 +53,46 @@ def _opcion(argv, nombre):
     return None
 
 
+class _Eco(io.TextIOBase):
+    """Escribe en la consola de siempre Y en un buffer, a la vez.
+
+    La consola sigue siendo la fuente para quien ejecuta desde una terminal
+    o un .bat; el buffer alimenta la ventana de resultado.
+    """
+
+    def __init__(self, real):
+        self._real = real
+        self._buffer = io.StringIO()
+
+    def write(self, s):
+        self._buffer.write(s)
+        try:
+            self._real.write(s)
+        except Exception:
+            pass          # una consola cerrada no debe tumbar la operacion
+        return len(s)
+
+    def flush(self):
+        try:
+            self._real.flush()
+        except Exception:
+            pass
+
+    def getvalue(self):
+        return self._buffer.getvalue()
+
+
+@contextlib.contextmanager
+def _consola_duplicada():
+    eco = _Eco(sys.stdout)
+    anterior = sys.stdout
+    sys.stdout = eco
+    try:
+        yield eco
+    finally:
+        sys.stdout = anterior
+
+
 def _cabecera():
     print()
     print("=" * ANCHO)
@@ -69,6 +111,34 @@ def _describir_destino():
         return doc.name
     except Exception:
         return "sin configurar (config.json -> documento_base)"
+
+
+def _hay_documento():
+    """¿Se puede resolver el documento base ahora mismo?"""
+    try:
+        return D.resolver_documento(None, G.cargar_config()).exists()
+    except Exception:
+        return False
+
+
+def _describir_cifras():
+    """Estado del candado, en una línea, para la cabecera de la ventana.
+
+    Vacío si no se puede saber: la ventana simplemente no lo muestra.
+    """
+    try:
+        doc = D.resolver_documento(None, G.cargar_config())
+        bloqueadas, total, proteccion = D.estado_candado(doc)
+    except Exception:
+        return ""
+    if not total:
+        return "el documento aún no tiene regiones de datos"
+    if bloqueadas == total:
+        extra = "  ·  modo estricto" if proteccion else ""
+        return f"PROTEGIDAS ({total} regiones){extra}"
+    if bloqueadas == 0:
+        return f"EDITABLES a mano ({total} regiones sin candado)"
+    return f"MIXTO ({bloqueadas} de {total} con candado)"
 
 
 def _resolver_libro(args):
@@ -131,7 +201,8 @@ Add-Type -AssemblyName System.Drawing | Out-Null
 
 $documento = if ($args.Count -ge 1) { $args[0] } else { '' }
 $libro     = if ($args.Count -ge 2) { $args[1] } else { '' }
-$captura   = if ($args.Count -ge 3) { $args[2] } else { '' }
+$cifras    = if ($args.Count -ge 3) { $args[2] } else { '' }
+$captura   = if ($args.Count -ge 4) { $args[3] } else { '' }
 
 # escala real de la pantalla
 $g = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
@@ -167,7 +238,7 @@ $fInfo    = if ($hayIconos) { New-Object System.Drawing.Font('Segoe MDL2 Assets'
 
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'Estados Financieros'
-$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 600))
+$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 566))
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = $fondo
 $f.FormBorderStyle = 'FixedSingle'
@@ -209,7 +280,33 @@ $lLibro.Location = New-Object System.Drawing.Point((S 32), (S 84))
 $lLibro.Size = New-Object System.Drawing.Size((S 600), (S 22))
 $f.Controls.Add($lLibro)
 
-$script:eleccion = '0'
+# Estado REAL del candado, leido del documento. Sin esta linea, las
+# opciones de proteger/desproteger eran dos botones ciegos: no habia forma
+# de saber en que estado estaba el documento, asi que pulsarlos no parecia
+# tener ningun efecto.
+$lCifras = New-Object System.Windows.Forms.Label
+$lCifras.Text = if ($cifras) { "Cifras: $cifras" } else { '' }
+$lCifras.Font = $fSub
+$lCifras.ForeColor = if ($cifras -like 'EDITABLES*') { $ambar } else { $suave }
+$lCifras.AutoEllipsis = $true
+$lCifras.Location = New-Object System.Drawing.Point((S 32), (S 106))
+$lCifras.Size = New-Object System.Drawing.Size((S 600), (S 22))
+$f.Controls.Add($lCifras)
+
+# La eleccion vive DENTRO de una tabla hash, no en una variable suelta.
+#
+# Motivo: los manejadores de clic se crean con .GetNewClosure(), que le da a
+# cada bloque su propio ambito capturado. Una asignacion como
+# «$script:eleccion = $valor» hecha ahi dentro escribe en ese ambito
+# aislado, no en el del script: la ventana se cerraba, pero el valor que se
+# leia al final seguia siendo el inicial ('0' = Salir). O sea, TODAS las
+# tarjetas del menu acababan comportandose como «Salir», y por eso la
+# aplicacion parecia un puñado de botones sin efecto.
+#
+# Mutar un objeto SI atraviesa el ambito: la closure y el script comparten
+# la misma tabla hash. Es lo mismo que hace que el resaltado al pasar el
+# raton si funcione ($panel.BackColor).
+$estado = @{ valor = '0' }
 
 function Nueva-Opcion($icono, $texto, $detalle, $ayuda, $y, $valor, $color) {
   $alto = S 62
@@ -257,7 +354,7 @@ function Nueva-Opcion($icono, $texto, $detalle, $ayuda, $y, $valor, $color) {
   $pistas.SetToolTip($lInfo, $ayuda)
   $panel.Controls.Add($lInfo)
 
-  $alClic = { $script:eleccion = $valor; $f.Close() }.GetNewClosure()
+  $alClic = { $estado.valor = $valor; $f.Close() }.GetNewClosure()
   $entrar = { $panel.BackColor = [System.Drawing.Color]::FromArgb(240, 245, 244) }.GetNewClosure()
   $salir  = { $panel.BackColor = $tarjeta }.GetNewClosure()
 
@@ -283,38 +380,43 @@ Nueva-Opcion $i.refrescar 'Actualizar el documento de siempre' `
    "la tabla del estado, los campos de encabezado y las cifras que haya`n" +
    "intercalado en la redaccion.`n`n" +
    "Su texto no se toca. Si borro un parrafo, sigue borrado.`n`n" +
-   "Cierre el documento en Word antes de ejecutarlo.") 122 '1' $acento
+   "Cierre el documento en Word antes de ejecutarlo.") 140 '1' $acento
 
 Nueva-Opcion $i.nuevo 'Crear un documento nuevo' `
-  'Sale de la plantilla, en la carpeta salidas\.' `
+  'Una copia desechable, en salidas\. Le dira donde quedo.' `
   ("Genera un Word desde cero con las cifras del Excel.`n`n" +
    "Es una foto desechable: sirve para una entrega puntual. Lo que`n" +
    "escriba en el NO pasa al siguiente que genere.`n`n" +
-   "No toca el documento de siempre.") 200 '2' $tinta
+   "No toca el documento de siempre. Al terminar le muestra la ruta`n" +
+   "exacta y le ofrece abrir la carpeta.") 218 '2' $tinta
 
 Nueva-Opcion $i.carpeta 'Cambiar el documento que se actualiza' `
   'Abre el explorador para elegir otro documento de Word.' `
   ("Elige que archivo actualiza la opcion 1, y lo recuerda.`n`n" +
    "Comprueba que sea un .docx valido y le avisa si todavia le faltan`n" +
    "las regiones marcadas.`n`n" +
-   "Queda guardado en config.json.") 278 '3' $tinta
+   "Queda guardado en config.json.") 296 '3' $tinta
 
-Nueva-Opcion $i.abrir 'Permitir editar las cifras a mano en Word' `
-  'Ojo: lo que teclee lo machaca el siguiente refresco.' `
-  ("Quita el candado de las cifras y de la tabla para poder teclear`n" +
-   "encima en Word.`n`n" +
-   "AVISO: siguen vinculadas al Excel. Lo que escriba a mano`n" +
-   "desaparece en el siguiente refresco.`n`n" +
-   "Para que un valor escrito a mano sobreviva, hay que desvincularlo:`n" +
-   "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 356 '4' $ambar
-
-Nueva-Opcion $i.cerrar 'Volver a proteger las cifras' `
-  'Word deja de permitir teclear dentro de ellas.' `
-  ("Vuelve a poner el candado a la tabla, a los campos de encabezado`n" +
-   "y a las cifras intercaladas en la redaccion.`n`n" +
-   "OJO: solo protege lo que esta dentro de una region marcada. Un`n" +
-   "numero copiado y pegado del Excel como texto normal NO queda`n" +
-   "protegido, porque el programa no puede saber que es una cifra.") 434 '5' $tinta
+# Un solo interruptor, no dos botones. La etiqueta dice que va a PASAR,
+# y la linea «Cifras:» de arriba dice como estan AHORA.
+if ($cifras -like 'EDITABLES*') {
+  Nueva-Opcion $i.cerrar 'Volver a proteger las cifras' `
+    'Ahora mismo se pueden teclear a mano. Esto lo impide.' `
+    ("Vuelve a poner el candado a la tabla, a los campos de encabezado`n" +
+     "y a las cifras intercaladas en la redaccion.`n`n" +
+     "OJO: solo protege lo que esta dentro de una region marcada. Un`n" +
+     "numero copiado y pegado del Excel como texto normal NO queda`n" +
+     "protegido, porque el programa no puede saber que es una cifra.") 374 '5' $tinta
+} else {
+  Nueva-Opcion $i.abrir 'Permitir editar las cifras a mano en Word' `
+    'Ojo: lo que teclee lo machaca el siguiente refresco.' `
+    ("Quita el candado de las cifras y de la tabla para poder teclear`n" +
+     "encima en Word.`n`n" +
+     "AVISO: siguen vinculadas al Excel. Lo que escriba a mano`n" +
+     "desaparece en el siguiente refresco.`n`n" +
+     "Para que un valor escrito a mano sobreviva, hay que desvincularlo:`n" +
+     "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 374 '4' $ambar
+}
 
 $salir = New-Object System.Windows.Forms.Button
 $salir.Text = 'Salir'
@@ -323,10 +425,10 @@ $salir.ForeColor = $suave
 $salir.BackColor = $fondo
 $salir.FlatStyle = 'Flat'
 $salir.FlatAppearance.BorderSize = 0
-$salir.Location = New-Object System.Drawing.Point((S 540), (S 516))
+$salir.Location = New-Object System.Drawing.Point((S 540), (S 482))
 $salir.Size = New-Object System.Drawing.Size((S 92), (S 34))
 $salir.Cursor = [System.Windows.Forms.Cursors]::Hand
-$salir.Add_Click({ $script:eleccion = '0'; $f.Close() })
+$salir.Add_Click({ $estado.valor = '0'; $f.Close() })
 $f.Controls.Add($salir)
 
 if ($captura) {
@@ -339,36 +441,179 @@ if ($captura) {
 } else {
   [void]$f.ShowDialog()
 }
-Write-Output ("ELECCION=" + $script:eleccion)
+Write-Output ("ELECCION=" + $estado.valor)
 """
 
 
-def menu_ventana(destino, libro=""):
-    """Muestra el menú en una ventana. Devuelve la opción, o None si no
-    se pudo dibujar (entonces el llamante usa el menú de consola)."""
+#: Ventana de resultado. Sin esto, la aplicacion cerraba la ventana del
+#: menu, hacia el trabajo y volcaba el informe en una consola que aparece
+#: DETRAS: desde el punto de vista del usuario, el boton no hacia nada.
+#: Aqui se le dice que paso, donde quedo, y se le ofrece abrirlo.
+_PS_RESULTADO = r"""
+$ErrorActionPreference = 'Stop'
+$codigo = @"
+using System;
+using System.Runtime.InteropServices;
+public static class PppRes {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern int SetProcessDpiAwarenessContext(IntPtr v);
+}
+"@
+try { Add-Type -TypeDefinition $codigo -ErrorAction Stop } catch {}
+try   { [void][PppRes]::SetProcessDpiAwarenessContext([IntPtr](-4)) }
+catch { try { [void][PppRes]::SetProcessDPIAware() } catch {} }
+
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+Add-Type -AssemblyName System.Drawing | Out-Null
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+$titulo  = if ($args.Count -ge 1) { $args[0] } else { 'Listo' }
+# El informe llega por ARCHIVO, no como argumento: un texto de varias
+# lineas pasado en la linea de ordenes se parte por los saltos y powershell
+# lo recibe troceado en $args, con lo que la ventana no llegaba a abrirse.
+$rutaCuerpo = if ($args.Count -ge 2) { $args[1] } else { '' }
+$cuerpo = ''
+if ($rutaCuerpo -and (Test-Path -LiteralPath $rutaCuerpo)) {
+  $cuerpo = Get-Content -LiteralPath $rutaCuerpo -Raw -Encoding UTF8
+}
+$destino = if ($args.Count -ge 3) { $args[2] } else { '' }
+$ok      = if ($args.Count -ge 4) { $args[3] -ne '0' } else { $true }
+
+$g = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+$k = $g.DpiX / 96.0
+$g.Dispose()
+function S($n) { [int][Math]::Round($n * $k) }
+
+$tinta  = [System.Drawing.Color]::FromArgb(26, 34, 38)
+$suave  = [System.Drawing.Color]::FromArgb(102, 114, 120)
+$fondo  = [System.Drawing.Color]::FromArgb(247, 246, 243)
+$acento = [System.Drawing.Color]::FromArgb(17, 94, 89)
+$rojo   = [System.Drawing.Color]::FromArgb(155, 44, 44)
+
+$f = New-Object System.Windows.Forms.Form
+$f.Text = 'Estados Financieros'
+$f.ClientSize = New-Object System.Drawing.Size((S 620), (S 420))
+$f.StartPosition = 'CenterScreen'
+$f.BackColor = $fondo
+$f.FormBorderStyle = 'FixedSingle'
+$f.MaximizeBox = $false
+$f.ShowIcon = $false
+$f.TopMost = $true
+
+$lTitulo = New-Object System.Windows.Forms.Label
+$lTitulo.Text = $titulo
+$lTitulo.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 15, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+$lTitulo.ForeColor = if ($ok) { $acento } else { $rojo }
+$lTitulo.AutoSize = $true
+$lTitulo.Location = New-Object System.Drawing.Point((S 26), (S 22))
+$f.Controls.Add($lTitulo)
+
+$caja = New-Object System.Windows.Forms.TextBox
+$caja.Multiline = $true
+$caja.ReadOnly = $true
+$caja.ScrollBars = 'Vertical'
+$caja.BorderStyle = 'FixedSingle'
+$caja.BackColor = [System.Drawing.Color]::White
+$caja.ForeColor = $tinta
+$caja.Font = New-Object System.Drawing.Font('Consolas', 9.5, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+$caja.Text = $cuerpo -replace "`n", "`r`n"
+$caja.Location = New-Object System.Drawing.Point((S 26), (S 62))
+$caja.Size = New-Object System.Drawing.Size((S 568), (S 272))
+$f.Controls.Add($caja)
+
+function Nuevo-Boton($texto, $x, $accion, $ancho) {
+  $b = New-Object System.Windows.Forms.Button
+  $b.Text = $texto
+  $b.ForeColor = $tinta
+  $b.BackColor = [System.Drawing.Color]::White
+  $b.FlatStyle = 'Flat'
+  $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(224, 221, 214)
+  $b.Location = New-Object System.Drawing.Point((S $x), (S 350))
+  $b.Size = New-Object System.Drawing.Size((S $ancho), (S 36))
+  $b.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $b.Add_Click($accion)
+  $f.Controls.Add($b)
+  return $b
+}
+
+if ($destino -and (Test-Path -LiteralPath $destino)) {
+  [void](Nuevo-Boton 'Abrir el documento' 26 { Start-Process $destino }.GetNewClosure() 150)
+  [void](Nuevo-Boton 'Abrir la carpeta'  186 {
+    Start-Process explorer.exe -ArgumentList ('/select,"' + $destino + '"')
+  }.GetNewClosure() 150)
+}
+
+$cerrar = Nuevo-Boton 'Cerrar' 502 { $f.Close() } 92
+$f.AcceptButton = $cerrar
+
+# El foco va al boton, no a la caja: si se queda en la caja, Windows
+# selecciona todo el informe y sale en azul, como si estuviera resaltado.
+$f.Add_Shown({
+  $cerrar.Focus()
+  $caja.SelectionStart = 0
+  $caja.SelectionLength = 0
+})
+[void]$f.ShowDialog()
+"""
+
+
+def _lanzar_ps(script_texto, *argumentos, timeout=1800):
+    """Escribe un .ps1 temporal y lo ejecuta. Devuelve (stdout, stderr) o None.
+
+    El .ps1 se escribe con BOM: Windows PowerShell 5.1 lee un archivo sin BOM
+    como ANSI, y entonces los acentos y las comillas angulares del script
+    llegan como basura.
+    """
     import subprocess
     import tempfile
 
-    tmp = Path(tempfile.mkdtemp(prefix="fs_ventana_"))
+    tmp = Path(tempfile.mkdtemp(prefix="fs_ps_"))
     script = tmp / "ventana.ps1"
     try:
-        script.write_text(_PS_VENTANA, encoding="utf-8")
+        script.write_text(script_texto, encoding="utf-8-sig")
         res = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-STA", "-File", str(script),
-             str(destino or ""), str(libro or ""), ""],
-            capture_output=True, text=True, timeout=1800,
+             "-STA", "-File", str(script)] + [str(a or "") for a in argumentos],
+            capture_output=True, text=True, timeout=timeout,
         )
+        return res.stdout or "", res.stderr or ""
     except Exception:
         return None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    for linea in (res.stdout or "").splitlines():
+
+def menu_ventana(destino, libro="", cifras=""):
+    """Muestra el menú en una ventana. Devuelve la opción, o None si no
+    se pudo dibujar (entonces el llamante usa el menú de consola)."""
+    salida = _lanzar_ps(_PS_VENTANA, destino, libro, cifras, "")
+    if salida is None:
+        return None
+    for linea in salida[0].splitlines():
         linea = linea.strip()
         if linea.startswith("ELECCION="):
             return linea[len("ELECCION="):].strip()
     return None
+
+
+def ventana_resultado(titulo, cuerpo, destino=None, ok=True):
+    """Enseña el resultado en una ventana, con botones para abrirlo.
+
+    Si no se puede dibujar, no pasa nada: el mismo informe ya se imprimió
+    en la consola.
+    """
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="fs_res_"))
+    try:
+        # Por archivo: un informe de varias lineas no cabe en un argumento
+        # de linea de ordenes sin partirse.
+        cuerpo_txt = tmp / "informe.txt"
+        cuerpo_txt.write_text(cuerpo or "", encoding="utf-8")
+        _lanzar_ps(_PS_RESULTADO, titulo, cuerpo_txt, destino or "",
+                   "1" if ok else "0", timeout=1800)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def _menu(texto_libro=""):
     destino = _describir_destino()
     _cabecera()
@@ -385,11 +630,14 @@ def _menu(texto_libro=""):
     print("   3)  CAMBIAR el documento que se actualiza")
     print("       Abre el explorador para elegir otro documento de Word.")
     print()
+    cifras = _describir_cifras()
     print("   4)  PERMITIR editar las cifras a mano en Word")
     print("       Ojo: lo que teclee lo machaca el siguiente refresco.")
     print()
     print("   5)  VOLVER A PROTEGER las cifras")
     print("       Word deja de permitir teclear dentro de ellas.")
+    if cifras:
+        print(f"       Ahora mismo: {cifras}")
     print()
     print("   0)  Salir")
     print()
@@ -492,9 +740,26 @@ def ejecutar(argv):
 
     libro, texto_libro, aviso_libro = _resolver_libro(args)
 
+    # ¿Vino la orden de la ventana, o de una bandera? Solo la primera debe
+    # terminar en una ventana de resultado: si «--bloquear» abriera una,
+    # cualquier uso desde un .bat o una tarea programada se quedaria
+    # colgado esperando a que alguien pulse «Cerrar».
+    interactivo = eleccion is None
+
     if eleccion is None:
+        # Arranque guiado: sin documento base, TODAS las opciones salvo la 2
+        # fallan con el mismo error. Antes se dibujaban igualmente cuatro
+        # botones que no podian funcionar; ahora se pide primero el
+        # documento, que es el unico paso que desbloquea el resto.
+        if not _hay_documento():
+            print()
+            print(" No hay un documento de Word que actualizar todavia.")
+            print(" Eliga uno para empezar (queda guardado en config.json).")
+            cambiar_documento()
+
         # Primero la ventana; si el equipo no la puede dibujar, la consola.
-        eleccion = menu_ventana(_describir_destino(), texto_libro)
+        eleccion = menu_ventana(_describir_destino(), texto_libro,
+                                _describir_cifras())
         if eleccion is None:
             eleccion = _menu(texto_libro)
 
@@ -527,10 +792,20 @@ def ejecutar(argv):
         print()
         print(f" Leyendo las cifras de: {libro.name}")
         print(f" Carpeta:               {libro.parent}")
-        if eleccion == "1":
-            R.ejecutar(resto)
-        else:
-            G.ejecutar(resto)
+
+        # Se hace el trabajo con la consola duplicada a un buffer: lo mismo
+        # que se imprime se enseña luego en una ventana. Sin esto el informe
+        # acababa en una consola que aparece detras de todo, y la operacion
+        # parecia no haber hecho nada.
+        with _consola_duplicada() as eco:
+            if eleccion == "1":
+                destino = R.ejecutar(resto)
+                titulo = "Documento actualizado"
+            else:
+                destino = G.ejecutar(resto)
+                titulo = "Documento nuevo creado"
+        if interactivo:
+            ventana_resultado(titulo, eco.getvalue().strip(), destino, ok=True)
         return 0
 
     if eleccion == "3":
@@ -538,30 +813,41 @@ def ejecutar(argv):
 
     if eleccion in ("4", "5"):
         cfg = G.cargar_config()
-        documento = D.resolver_documento(None, cfg)
+        # El documento puede venir en la orden: «--documento OTRO.docx».
+        # Antes estaba fijado a None, asi que estas dos opciones solo sabian
+        # operar sobre el de config.json.
+        documento = D.resolver_documento(_opcion(argv, "--documento"), cfg)
         abrir = eleccion == "4"
         D._respaldar(documento)
-        print()
-        if abrir:
-            D.desproteger(documento)
-            D.cambiar_candado(documento, bloquear=False)
-        else:
-            # Candado de region + proteccion de documento. El candado solo no
-            # basta: Buscar y reemplazar lo atraviesa y Word en el navegador
-            # ni lo mira.
-            D.cambiar_candado(documento, bloquear=True)
-            D.proteger_salvo_datos(documento, str(cfg.get("clave_proteccion") or "fs"))
-        print()
-        if abrir:
-            print(" Ya puede teclear encima de las cifras en Word.")
-            print(" AVISO: lo que escriba a mano lo MACHACA el siguiente refresco.")
-            print("        Para que un valor a mano sobreviva, hay que desvincularlo")
-            print("        (clic derecho sobre el recuadro en Word -> Quitar control")
-            print("        de contenido).")
-        else:
-            print(" Las cifras son intocables: ni tecleando, ni con Buscar y")
-            print(" reemplazar, ni desde Word en el navegador.")
-            print(" La redacción sigue libre en todo el documento.")
+        with _consola_duplicada() as eco:
+            print(f" Documento: {documento.name}")
+            print(f" Carpeta:   {documento.parent}")
+            print()
+            if abrir:
+                D.desproteger(documento)
+                D.cambiar_candado(documento, bloquear=False)
+            else:
+                # Candado de region + proteccion de documento. El candado solo
+                # no basta: Buscar y reemplazar lo atraviesa y Word en el
+                # navegador ni lo mira.
+                D.cambiar_candado(documento, bloquear=True)
+                D.proteger_salvo_datos(
+                    documento, str(cfg.get("clave_proteccion") or "fs"))
+            print()
+            if abrir:
+                print(" Ya puede teclear encima de las cifras en Word.")
+                print(" AVISO: lo que escriba a mano lo MACHACA el siguiente refresco.")
+                print("        Para que un valor a mano sobreviva, hay que desvincularlo")
+                print("        (clic derecho sobre el recuadro en Word -> Quitar control")
+                print("        de contenido).")
+            else:
+                print(" Las cifras son intocables: ni tecleando, ni con Buscar y")
+                print(" reemplazar, ni desde Word en el navegador.")
+                print(" La redacción sigue libre en todo el documento.")
+        if interactivo:
+            ventana_resultado(
+                "Cifras editables a mano" if abrir else "Cifras protegidas",
+                eco.getvalue().strip(), documento, ok=True)
         return 0
 
     # Opción no listada en el menú: diagnóstico para quien da soporte.

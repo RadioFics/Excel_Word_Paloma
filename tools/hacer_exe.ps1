@@ -15,8 +15,21 @@
 # =====================================================================
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$py   = Join-Path $root 'python\python.exe'
-if (-not (Test-Path $py)) { throw "Falta .\python\  ->  tools\bootstrap_python.ps1" }
+# Python portable del proyecto; si no esta, se acepta uno del sistema. Antes
+# se abortaba en seco, y en un equipo sin .\python\ no habia forma de
+# reconstruir los .exe (que es justo cuando hace falta).
+$py = Join-Path $root 'python\python.exe'
+if (-not (Test-Path $py)) {
+    $py = $null
+    foreach ($cand in @('py', 'python')) {
+        $c = Get-Command $cand -ErrorAction SilentlyContinue
+        if ($c) { $py = $c.Source; break }
+    }
+    if (-not $py) {
+        throw "No hay Python. Ejecute tools\bootstrap_python.ps1, o instale Python 3."
+    }
+    Write-Host "Sin .\python\ portable; uso $py" -ForegroundColor Yellow
+}
 
 # nombre de .exe  ->  script de entrada en src\
 $objetivos = [ordered]@{
@@ -31,9 +44,21 @@ $objetivos = [ordered]@{
 # --specpath mueve la base de las rutas relativas, asi que los recursos
 # se pasan en absoluto.
 $plantilla     = Join-Path $root 'plantillas\plantilla_estado_situacion_financiera.docx'
-$configuracion = Join-Path $root 'config.json'
 $trabajo = Join-Path $env:TEMP ("fsbuild-" + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Force -Path $trabajo | Out-Null
+
+# La config que se EMBEBE en el .exe se limpia primero: 'documento_base' es
+# una ruta absoluta de la maquina que compila, y quedaba congelada dentro
+# del binario. En cuanto el .exe cambiaba de manos (o de perfil de usuario)
+# apuntaba a una carpeta inexistente, y TODAS las opciones que dependen del
+# documento morian a la vez con el mismo error. El .exe debe salir sin
+# documento y pedirlo la primera vez; el config.json de al lado manda.
+$configuracion = Join-Path $trabajo 'config.json'
+$cfg = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$cfg.documento_base = ''
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($configuracion, ($cfg | ConvertTo-Json -Depth 20), $utf8)
+Write-Host "Config embebida sin 'documento_base' (se pedira en el primer uso)." -ForegroundColor DarkGray
 
 Push-Location $root
 try {

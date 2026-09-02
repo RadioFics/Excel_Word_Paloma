@@ -34,10 +34,89 @@ Arrastra tu Excel sobre el `.exe` (o haz doble clic) y elige:
 | | Opción | Qué hace |
 |---|---|---|
 | **1** | Actualizar el documento de siempre | Refresca las cifras. Conserva toda la redacción. |
-| **2** | Crear un documento nuevo | Un Word desde cero en `salidas\`. Para una entrega puntual. |
+| **2** | Crear un documento nuevo | Un Word desde cero en `salidas\`. Al terminar te dice dónde quedó. |
 | **3** | Cambiar el documento que se actualiza | Elige otro documento de Word desde el explorador. |
-| **4** | Permitir editar las cifras a mano | Desbloquea temporalmente. |
-| **5** | Volver a proteger las cifras | Las vuelve intocables. |
+| **4** | Candado de las cifras | Un solo interruptor. La ventana muestra el estado actual (`PROTEGIDAS` / `EDITABLES`) y el botón ofrece lo contrario. |
+
+La cabecera de la ventana dice siempre las tres cosas que determinan el
+resultado: qué documento se va a tocar, de qué Excel salen las cifras y
+cómo está ahora el candado. Al terminar, una ventana de resultado resume lo
+que cambió y ofrece abrir el documento o su carpeta.
+
+Desde la línea de órdenes siguen existiendo las dos mitades por separado:
+`--desbloquear` y `--bloquear`.
+
+## En varios equipos
+
+`config.json` **viaja por git y no debe llevar rutas de ninguna máquina.** Si
+alguien escribe ahí un `C:\Users\Fulano\...`, cada `git pull` se lo impone a
+la otra y las dos se pisan sin parar.
+
+Lo que depende del equipo va en **`config.local.json`**, que no se versiona y
+manda sobre todo lo demás. Lo escribe sola la opción 3; no hay que crearlo a
+mano. En un clon recién hecho no existe, así que la aplicación pide el
+documento la primera vez y lo recuerda.
+
+Si aun así quieres compartir una ruta por git, usa marcadores que no dependen
+de la máquina:
+
+| Marcador | Se convierte en |
+|---|---|
+| `${ONEDRIVE}` | El OneDrive **de empresa** de ese equipo |
+| `${USUARIO}` | La carpeta del usuario actual |
+| `${PROYECTO}` | La carpeta del proyecto (o la del `.exe`) |
+
+Como red de seguridad, una ruta absoluta que apunte a un perfil inexistente se
+reintenta bajo el usuario actual antes de dar error.
+
+## Pruebas
+
+```bash
+python tools\probar_refresco.py --libro "Copia Editable.xlsx"
+```
+
+Catorce comprobaciones sobre copias temporales: refrescos repetidos, añadir y
+quitar líneas, reordenarlas, renombrarlas con y sin rango con nombre, cifras
+intercaladas en la redacción, anclas huérfanas, respaldo y restauración, y
+rechazo de un `.docx` corrupto. Después de **cada** escritura verifica que el
+archivo siga siendo un ZIP válido, que no haya regiones duplicadas, que
+`fs-meta` siga siendo JSON legible y que la redacción no se haya movido.
+
+Ni el documento ni el libro reales se tocan.
+
+## Dónde esté la tabla da igual
+
+Nada se localiza por coordenadas. Puedes mover el estado a otra esquina de la
+hoja, meter filas encima, añadir columnas a la izquierda o renombrar la hoja:
+se sigue leyendo igual.
+
+| Qué se busca | Cómo |
+|---|---|
+| La hoja | Por su contenido (`Total assets`, `ASSETS`, «Situación Financiera»…). El nombre de `config.json` es una pista que **se verifica**: si esa hoja no tiene forma de estado, se elige otra. |
+| Las columnas | Por perfil: las dos con más cifras son actual y previo; la de texto a su izquierda es la etiqueta; los rótulos `Note` y `Tipo` se buscan en toda la altura. |
+| El encabezado | Por contenido, no por fila: la fila de fechas se reconoce por los nombres de mes, la escala por el `1000`, la auditoría por la palabra «audit» y la moneda por el símbolo. |
+| Dónde empiezan los datos | Justo después del bloque de encabezado, sea la fila 5 o la 18. |
+| El ancho del barrido | Hasta donde diga la hoja. `max_cols_scan` y `max_filas_scan` son un **mínimo**, no un tope. |
+
+Puedes forzar cualquier columna en `config.json -> columnas` con su letra, y la
+fila de inicio con `primera_fila`. Vacío o `null` = detectar.
+
+## Fijar lo que hoy se adivina
+
+```bash
+python src\fs_documento.py tipos   "libro.xlsx" --aplicar
+python src\fs_documento.py nombrar "libro.xlsx" --aplicar
+```
+
+- **`tipos`** escribe la columna `Tipo` con exactamente lo que ya se venía
+  infiriendo. No cambia el documento; lo que cambia es que deja de depender de
+  la negrita y de que la etiqueta empiece por «Total».
+- **`nombrar`** crea un rango `fs_<clave>` por línea. Sin él, renombrar una
+  fila en el Excel rompe el vínculo con la cifra que la cita en la redacción.
+
+Las dos pilotan Excel por COM, nunca openpyxl: openpyxl no recalcula fórmulas
+y al reguardar descartaría su valor cacheado, dejando el Word en blanco. Ambas
+dejan un `.bak` del libro antes de tocarlo, y sin `--aplicar` solo simulan.
 
 Además:
 
