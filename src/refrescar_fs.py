@@ -15,10 +15,15 @@ Uso
     Arrastre su Excel sobre RefrescarFS.exe  (o sobre refrescar.bat)
     Doble clic sin arrastrar nada            (busca el Excel por convención)
 
-    python refrescar_fs.py [libro.xlsx] [--documento otro.docx] [--preparar]
+    python refrescar_fs.py [libro.xlsx] [--documento otro.docx] [--no-preparar]
 
-    --preparar   añade al documento las regiones que le falten antes de
-                 refrescar. Úselo la primera vez, o si añadió zonas nuevas.
+Si al documento le faltan las regiones, se le añaden solas antes de
+refrescar: en blanco se usa de base, y con redacción encima el estado entra
+como un apartado aparte, sin tocar el texto que ya hubiera.
+
+    --preparar      redundante (es lo que se hace ya). Se acepta por
+                    compatibilidad con las órdenes que lo llevan.
+    --no-preparar   no añadir nada: si faltan las regiones, no se escribe.
 """
 import sys
 import hashlib
@@ -70,12 +75,27 @@ def ejecutar(argv):
     meta = ctx.pop("_meta", {})
     ctx.pop("_avisos", None)
 
-    if "--preparar" in flags:
+    # La copia .bak va lo primero: es la de ANTES de tocar nada, que es la
+    # única que sirve para deshacer. Estaba después de preparar el
+    # documento, así que respaldaba el resultado en vez del original.
+    D._respaldar(documento)
+
+    # Un documento sin las regiones del contrato no tiene dónde recibir las
+    # cifras: el refresco recorría sus anclas, no encontraba ninguna y
+    # terminaba con «no se actualizó NADA», dejando al usuario con un
+    # documento intacto y ninguna forma evidente de arreglarlo desde la
+    # ventana (--preparar solo existía en la línea de órdenes).
+    #
+    # Ahora se prepara solo. El documento no pierde nada: lo que ya
+    # estuviera escrito se respeta, y si traía redacción propia el estado
+    # entra como un apartado aparte. Con --no-preparar se recupera el
+    # comportamiento de antes.
+    integrado = D.clasificar_documento(documento)[0] == D.LISTO
+    if "--preparar" in flags or (not integrado and "--no-preparar" not in flags):
         print()
         print(D.imprimible("Preparando el documento (solo añade lo que falte)…"))
-        D.construir(documento, ctx, cfg_bitacora=cfg)
+        D.preparar(documento, ctx, cfg, respaldar=False)
 
-    D._respaldar(documento)
     sha = hashlib.sha256(xlsx.read_bytes()).hexdigest()[:12]
     inf = D.refrescar(documento, ctx, origen=f"{xlsx.name} (sha {sha})", cfg=cfg)
 
@@ -96,9 +116,9 @@ def ejecutar(argv):
 
     if not inf["tablas"] and not inf["campos"] and not inf["datos"]:
         print()
-        print(" AVISO — no se actualizó NADA. El documento no tiene todavía")
-        print("         las regiones marcadas. Ejecútelo una vez con:")
-        print("             refrescar.bat --preparar")
+        print(" AVISO — no se actualizó NADA, y eso no debería pasar: el")
+        print("         documento se prepara solo antes de refrescarlo.")
+        print("         Si lanzó la orden con --no-preparar, quítelo.")
 
     if inf["huerfanos"]:
         print()
@@ -132,12 +152,17 @@ def main():
         print("=" * 68)
         _pausa()
         sys.exit(1)
-    except PermissionError:
+    except PermissionError as e:
+        # Puede ser el .docx retenido por Word o el .xlsx retenido por Excel:
+        # decir «Word» a secas mandaba a cerrar el programa equivocado.
         print()
         print("=" * 68)
-        print(" EL DOCUMENTO ESTÁ ABIERTO")
+        print(" UN ARCHIVO ESTÁ ABIERTO EN OTRO PROGRAMA")
         print("=" * 68)
-        print(" Word lo tiene bloqueado. Ciérrelo y vuelva a intentarlo.")
+        print(f" {e}")
+        print()
+        print(" Ciérrelo (Word si es el documento, Excel si es el libro) y")
+        print(" vuelva a intentarlo.")
         print("=" * 68)
         _pausa()
         sys.exit(1)

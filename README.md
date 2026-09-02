@@ -33,10 +33,28 @@ Arrastra tu Excel sobre el `.exe` (o haz doble clic) y elige:
 
 | | Opción | Qué hace |
 |---|---|---|
-| **1** | Actualizar el documento de siempre | Refresca las cifras. Conserva toda la redacción. |
-| **2** | Crear un documento nuevo | Un Word desde cero en `salidas\`. Al terminar te dice dónde quedó. |
-| **3** | Cambiar el documento que se actualiza | Elige otro documento de Word desde el explorador. |
+| **1** | Actualizar el documento de siempre | Refresca las cifras. Conserva toda la redacción. Si al documento le faltan las regiones, se las añade solo. |
+| **6** | Crear la plantilla base desde el Excel | Un Word **vivo**, con las regiones dentro, guardado donde tú digas (disco u OneDrive). Queda fijado como el documento que se actualiza. |
+| **3** | Cambiar el documento que se actualiza | Vale cualquier `.docx`: ya integrado, en blanco o con redacción encima. Se adapta solo. |
+| **2** | Crear un documento nuevo | Una **copia desechable** en `salidas\`. No lleva regiones: no se puede actualizar después. |
 | **4** | Candado de las cifras | Un solo interruptor. La ventana muestra el estado actual (`PROTEGIDAS` / `EDITABLES`) y el botón ofrece lo contrario. |
+
+Las opciones **6** y **2** se parecen pero no son lo mismo: la 6 crea la
+**base viva** que se refresca cada cierre; la 2 saca una **foto** puntual
+que no se puede volver a actualizar.
+
+### Qué documentos valen (opción 3)
+
+Los tres casos funcionan, y el programa dice cuál ha encontrado:
+
+| Cómo llega el `.docx` | Qué hace |
+|---|---|
+| Ya tiene las regiones | Se usa tal cual. |
+| En blanco o casi | Se usa de base: se le monta el estado completo encima. |
+| Con redacción propia | El estado entra **detrás de un salto de página**, como un apartado aparte. Lo que hubiera escrito no se toca. |
+
+Un nombre con tildes o con espacios duros —los que Word y OneDrive meten
+solos— vale igual.
 
 La cabecera de la ventana dice siempre las tres cosas que determinan el
 resultado: qué documento se va a tocar, de qué Excel salen las cifras y
@@ -134,21 +152,31 @@ Además:
 
 **1 · Descarga el `.exe`** y déjalo en una carpeta.
 
-**2 · Dile qué documento actualizar.** Ejecútalo y elige la opción **3**:
-se abre el explorador, eliges tu `.docx` y queda guardado. (También puedes
-escribirlo a mano en un `config.json` junto al `.exe`.)
+**2 · Arrastra tu Excel encima** y elige uno de los dos caminos:
 
-**3 · Prepáralo la primera vez:**
+- **Empiezas de cero** → opción **6**. Te pregunta dónde guardar la
+  plantilla (disco u OneDrive, da igual), la crea ya con las cifras dentro
+  y la deja fijada como el documento que se actualiza.
+- **Ya tienes un Word** → opción **3**. Lo eliges en el explorador y se
+  prepara solo, tenga redacción o esté en blanco.
 
-```bash
-EstadosFinancieros.exe MI_LIBRO.xlsx --refrescar --preparar
-```
-
-**4 · A partir de ahí**, cada cierre: arrastra el Excel sobre el `.exe` y
+**3 · A partir de ahí**, cada cierre: arrastra el Excel sobre el `.exe` y
 elige la opción **1**.
 
-> **Cierra el documento en Word antes de refrescar.** Si está abierto, el
-> programa se detiene y te dice quién lo retiene.
+Desde la línea de órdenes, lo mismo sin menú:
+
+```bash
+EstadosFinancieros.exe MI_LIBRO.xlsx --plantilla
+EstadosFinancieros.exe MI_LIBRO.xlsx --refrescar
+```
+
+> **Cierra los dos archivos antes de ejecutar:** el documento en Word y el
+> libro en Excel. Si alguno está abierto, el programa se detiene y te dice
+> cuál es y quién lo retiene.
+>
+> El libro solo se **lee**, nunca se escribe — pero Excel lo retiene en
+> exclusiva mientras lo tiene abierto y no deja ni leerlo. Es el motivo más
+> frecuente de que una ejecución no arranque.
 
 La guía completa está en **[`docs/GUIA.md`](docs/GUIA.md)**.
 

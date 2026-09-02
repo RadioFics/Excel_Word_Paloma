@@ -3,8 +3,9 @@ REM ============================================================
 REM  estados_financieros.bat
 REM  UN SOLO icono que pregunta que hacer:
 REM    1) ACTUALIZAR el documento de siempre (conserva la redaccion)
-REM    2) CREAR un documento nuevo en salidas\
-REM    3) CAMBIAR el documento que se actualiza
+REM    6) CREAR LA PLANTILLA BASE desde el Excel, donde usted diga
+REM    3) CAMBIAR el documento que se actualiza (vale cualquier Word)
+REM    2) CREAR un documento nuevo en salidas\ (copia desechable)
 REM    4) Candado de las cifras
 REM
 REM  Arrastre el Excel encima, o haga doble clic.

@@ -9,8 +9,10 @@ REM  Uso 2: doble clic; busca el Excel por convencion de nombre.
 REM
 REM  Que documento actualiza: el de config.local.json (o, si no,
 REM  el de config.json) -> "documento_base".
-REM  La primera vez, o si anadio zonas nuevas al documento:
-REM      refrescar.bat --preparar
+REM  Si al documento le faltan las regiones, se le anaden solas
+REM  antes de volcar las cifras: en blanco se usa de base, y con
+REM  redaccion encima el estado entra como un apartado aparte.
+REM  Para impedirlo:  refrescar.bat --no-preparar
 REM
 REM  IMPORTANTE: cierre el documento en Word antes de refrescar.
 REM ============================================================

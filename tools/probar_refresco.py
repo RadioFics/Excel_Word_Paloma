@@ -40,6 +40,7 @@ sys.path.insert(0, str(_RAIZ / "src"))
 
 from openpyxl import Workbook                       # noqa: E402
 from docx import Document                           # noqa: E402
+from docx.oxml.ns import qn                        # noqa: E402
 
 import fs_contrato as C                             # noqa: E402
 import fs_documento as D                            # noqa: E402
@@ -641,6 +642,232 @@ def p_docx_corrupto(carpeta):
         assert ".bak" in str(e), "no mencionó la copia sana que hay al lado"
         return "rechazado, y avisa de la copia sana"
     raise AssertionError("respaldó un archivo corrupto encima de la copia buena")
+
+
+# --------------------------------------------------------------------------- #
+#  Elegir y adaptar el documento base
+# --------------------------------------------------------------------------- #
+@prueba("Un documento ya integrado se acepta, no se rechaza")
+def p_candidato_ya_integrado(carpeta):
+    b = Banco(carpeta)
+    b.refrescar()
+    ok, avisos, familias, info = D.revisar_candidato(b.docx)
+    assert ok, f"rechazó un documento válido: {avisos}"
+    assert info["estado"] == D.LISTO, f"lo clasificó como {info['estado']}"
+    assert familias.get(D.C.FAM_TABLA), "no vio la tabla que tiene dentro"
+    return f"reconocido como '{info['estado']}' con {familias[D.C.FAM_TABLA]} tabla(s)"
+
+
+@prueba("Un nombre con tildes y espacios duros se encuentra igual")
+def p_candidato_nombre_estropeado(carpeta):
+    """El fallo real: PowerShell devolvía la ruta pasada por la página de
+    códigos de la consola, que se come las tildes y rompe el espacio duro."""
+    b = Banco(carpeta)
+    b.refrescar()
+    bonito = carpeta / "DOCUMENTO DE EDICIÓN - PAMELA.docx"
+    shutil.move(str(b.docx), str(bonito))
+
+    # Exactamente lo que llegaba: 'Ó' -> 'O' y U+00A0 -> 0xFF (cp437).
+    roto = Path(str(bonito).replace("Ó", "O").replace(" ", "ÿ"))
+    assert not roto.exists(), "la ruta estropeada no debería existir"
+
+    ok, avisos, _fam, info = D.revisar_candidato(roto)
+    assert ok, f"rechazó el documento por el nombre: {avisos}"
+    assert info["ruta"] == bonito, f"resolvió a otro archivo: {info['ruta']}"
+    return "encontrado pese a la tilde comida y el espacio duro roto"
+
+
+@prueba("Un documento en blanco se usa de base")
+def p_base_en_blanco(carpeta):
+    xlsx = escribir_libro(carpeta / "libro.xlsx", FILAS_BASE)
+    cfg = G.cargar_config()
+    cfg["bitacora"] = "no"
+    docx = carpeta / "vacio.docx"
+    Document().save(str(docx))
+
+    estado, familias, _ = D.clasificar_documento(docx)
+    assert estado == D.EN_BLANCO, f"lo vio como '{estado}'"
+
+    ctx = contexto_de(xlsx, cfg)
+    D.preparar(docx, ctx, cfg, verbose=False)
+    D.refrescar(docx, ctx, origen="prueba", verbose=False, cfg=cfg)
+    r = comprobar_sano(docx, "en blanco")
+    assert r["filas_tabla"] > 1, "no se volcó la tabla"
+    return f"montado sobre el vacío: {r['filas_tabla']} filas, {r['n_regiones']} regiones"
+
+
+@prueba("Un documento CON redacción recibe un apartado y conserva su texto")
+def p_base_con_texto(carpeta):
+    xlsx = escribir_libro(carpeta / "libro.xlsx", FILAS_BASE)
+    cfg = G.cargar_config()
+    cfg["bitacora"] = "no"
+    docx = carpeta / "con_texto.docx"
+    doc = Document()
+    doc.add_paragraph("Informe de gestión del trimestre")
+    suyos = [f"Párrafo {i} de la persona, con acentuación: análisis." for i in range(1, 9)]
+    for t in suyos:
+        doc.add_paragraph(t)
+    doc.add_table(rows=2, cols=2)
+    doc.save(str(docx))
+
+    estado, _fam, detalle = D.clasificar_documento(docx)
+    assert estado == D.CON_TEXTO, f"lo vio como '{estado}' ({detalle})"
+
+    ctx = contexto_de(xlsx, cfg)
+    D.preparar(docx, ctx, cfg, verbose=False)
+    D.refrescar(docx, ctx, origen="prueba", verbose=False, cfg=cfg)
+    r = comprobar_sano(docx, "con texto")
+    assert r["filas_tabla"] > 1, "no se volcó la tabla"
+
+    despues = Document(str(docx))
+    texto = "\n".join(p.text for p in despues.paragraphs)
+    faltan = [t for t in suyos if t not in texto]
+    assert not faltan, f"se perdió redacción: {faltan[:2]}"
+
+    saltos = despues.element.body.findall(".//" + qn("w:br"))
+    assert any(br.get(qn("w:type")) == "page" for br in saltos), \
+        "el apartado no quedó separado por un salto de página"
+    return f"{len(suyos)} párrafos intactos y {r['filas_tabla']} filas añadidas aparte"
+
+
+@prueba("Preparar dos veces no duplica nada")
+def p_preparar_idempotente(carpeta):
+    xlsx = escribir_libro(carpeta / "libro.xlsx", FILAS_BASE)
+    cfg = G.cargar_config()
+    cfg["bitacora"] = "no"
+    docx = carpeta / "doble.docx"
+    doc = Document()
+    for i in range(6):
+        doc.add_paragraph(f"Párrafo {i} de la persona.")
+    doc.save(str(docx))
+
+    ctx = contexto_de(xlsx, cfg)
+    D.preparar(docx, ctx, cfg, verbose=False)
+    primera = comprobar_sano(docx, "1a preparación")
+    estado, añadidos = D.preparar(docx, ctx, cfg, verbose=False)
+    segunda = comprobar_sano(docx, "2a preparación")
+
+    assert estado == D.LISTO, f"la 2a vez lo vio como '{estado}'"
+    assert not añadidos, f"la 2a vez añadió cosas: {añadidos}"
+    assert primera["tags"] == segunda["tags"], "cambiaron las regiones"
+    return f"{len(segunda['tags'])} regiones, sin duplicados"
+
+
+@prueba("Crear la plantilla desde cero deja un documento refrescable")
+def p_crear_base(carpeta):
+    xlsx = escribir_libro(carpeta / "libro.xlsx", FILAS_BASE)
+    cfg = G.cargar_config()
+    cfg["bitacora"] = "no"
+    ctx = contexto_de(xlsx, cfg)
+
+    # Con subcarpeta inexistente: es lo que pasa cuando alguien escribe un
+    # nombre nuevo en el diálogo de guardado dentro de una carpeta recién
+    # creada de OneDrive.
+    destino = carpeta / "carpeta nueva" / "Estados financieros.docx"
+    D.crear_base(destino, ctx, cfg, verbose=False)
+    assert destino.exists(), "no creó el archivo"
+
+    estado, _fam, _ = D.clasificar_documento(destino)
+    assert estado == D.LISTO, f"la plantilla recién creada está '{estado}'"
+
+    D.refrescar(destino, ctx, origen="prueba", verbose=False, cfg=cfg)
+    r = comprobar_sano(destino, "plantilla nueva")
+    assert r["filas_tabla"] > 1, "la tabla salió vacía"
+
+    # Y la redacción que se escriba encima sobrevive al refresco siguiente.
+    doc = Document(str(destino))
+    doc.add_paragraph("Análisis escrito después de crearla.")
+    doc.save(str(destino))
+    D.refrescar(destino, ctx, origen="prueba 2", verbose=False, cfg=cfg)
+    texto = "\n".join(p.text for p in Document(str(destino)).paragraphs)
+    assert "Análisis escrito después de crearla." in texto, \
+        "el refresco se llevó por delante la redacción"
+    return f"{r['n_regiones']} regiones, {r['filas_tabla']} filas, redacción a salvo"
+
+
+@prueba("Un .doc antiguo se rechaza con una explicación útil")
+def p_candidato_doc_antiguo(carpeta):
+    viejo = carpeta / "antiguo.doc"
+    viejo.write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 100)   # cabecera OLE2
+    ok, avisos, _fam, _info = D.revisar_candidato(viejo)
+    assert not ok, "aceptó un .doc del Word antiguo"
+    assert any("Guardar como" in a for a in avisos), \
+        f"no dice cómo arreglarlo: {avisos}"
+    return "rechazado, y explica que hay que guardarlo como .docx"
+
+
+# --------------------------------------------------------------------------- #
+#  El libro de Excel tiene que dejarse leer
+# --------------------------------------------------------------------------- #
+def _retener_en_exclusiva(ruta):
+    """Abre el archivo negando el uso compartido, como hace Excel.
+
+    Con msvcrt.locking no vale: eso es un bloqueo por rango de bytes y el
+    propio proceso lo atraviesa, así que la prueba pasaba sin probar nada.
+    Hay que pedirle a Windows dwShareMode=0, que es lo que provoca el
+    ERROR_SHARING_VIOLATION que llega a Python como PermissionError.
+
+    Devuelve el manejador; ciérrelo con CloseHandle.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    GENERIC_READ = 0x80000000
+    OPEN_EXISTING = 3
+    INVALIDO = wintypes.HANDLE(-1).value
+
+    CreateFileW = ctypes.windll.kernel32.CreateFileW
+    CreateFileW.restype = wintypes.HANDLE
+    h = CreateFileW(str(ruta), GENERIC_READ, 0, None, OPEN_EXISTING, 0, None)
+    if h == INVALIDO:
+        raise AssertionError("no se pudo retener el archivo para la prueba")
+    return h
+
+
+@prueba("Un libro retenido por Excel se explica, no se vuelca la traza")
+def p_libro_bloqueado(carpeta):
+    """El fallo real: Excel retiene el .xlsx en exclusiva mientras lo tiene
+    abierto y openpyxl reventaba con un PermissionError sin explicación."""
+    import ctypes
+
+    xlsx = escribir_libro(carpeta / "libro.xlsx", FILAS_BASE)
+    cfg = G.cargar_config()
+
+    h = _retener_en_exclusiva(xlsx)
+    try:
+        try:
+            G.leer_contexto(xlsx, cfg)
+        except ValueError as e:
+            texto = str(e)
+            assert "Excel" in texto, f"no menciona Excel: {texto}"
+            assert xlsx.name in texto, "no dice de qué archivo habla"
+            assert "iérrelo" in texto, "no dice qué hacer"
+            return "avisa de que hay que cerrarlo, sin traza"
+        except PermissionError:
+            raise AssertionError(
+                "sigue saliendo el PermissionError crudo de openpyxl")
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+    raise AssertionError("leyó un libro bloqueado: el bloqueo no funcionó")
+
+
+@prueba("Un libro que no existe se explica antes de abrirlo")
+def p_libro_inexistente(carpeta):
+    try:
+        G.comprobar_legible(carpeta / "no existe.xlsx")
+    except ValueError as e:
+        assert "No se encontró" in str(e), f"mensaje inesperado: {e}"
+        return "avisa de que no existe"
+    raise AssertionError("no protestó por un libro inexistente")
+
+
+@prueba("Un libro normal pasa la comprobación sin estorbar")
+def p_libro_legible(carpeta):
+    xlsx = escribir_libro(carpeta / "libro.xlsx", FILAS_BASE)
+    G.comprobar_legible(xlsx)                 # no debe lanzar nada
+    ctx = contexto_de(xlsx, G.cargar_config())
+    assert ctx["lineas"], "no leyó ninguna línea"
+    return f"{len(ctx['lineas'])} líneas leídas"
 
 
 # --------------------------------------------------------------------------- #

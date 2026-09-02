@@ -10,7 +10,17 @@ individuales, que siguen funcionando por su cuenta.
 
     generador_fs.ejecutar()   ->  GeneradorFS.exe  /  generar.bat
     refrescar_fs.ejecutar()   ->  RefrescarFS.exe  /  refrescar.bat
+    fs_documento.crear_base() ->  la plantilla viva, desde cero
+    fs_documento.preparar()   ->  adaptar un Word cualquiera
     fs_documento.estado()     ->  la radiografía del proyecto
+
+Los dos «crear» no son lo mismo y conviene no confundirlos:
+
+    opción 6  crear_base()   -> un Word VIVO, con regiones dentro. Es la
+                               base que se refresca cada cierre.
+    opción 2  generador_fs   -> una FOTO en salidas\\, renderizada de una
+                               plantilla de Word. No lleva regiones, así
+                               que no se puede volver a actualizar.
 
 Uso
 ---
@@ -18,13 +28,15 @@ Uso
 
     python fs_menu.py [libro.xlsx]              menú interactivo
     python fs_menu.py [libro.xlsx] --refrescar   sin menú
-    python fs_menu.py [libro.xlsx] --generar     sin menú
+    python fs_menu.py [libro.xlsx] --plantilla   crear la base desde cero
+    python fs_menu.py [libro.xlsx] --generar     copia desechable, sin menú
     python fs_menu.py --estado                   sin menú
     python fs_menu.py --desbloquear              permite teclear las cifras
     python fs_menu.py --bloquear                 vuelve a protegerlas
     python fs_menu.py --consola                  menú de texto, sin ventana
 """
 import contextlib
+import hashlib
 import io
 import shutil
 import sys
@@ -238,7 +250,7 @@ $fInfo    = if ($hayIconos) { New-Object System.Drawing.Font('Segoe MDL2 Assets'
 
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'Estados Financieros'
-$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 566))
+$f.ClientSize = New-Object System.Drawing.Size((S 660), (S 644))
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = $fondo
 $f.FormBorderStyle = 'FixedSingle'
@@ -371,31 +383,47 @@ function Nueva-Opcion($icono, $texto, $detalle, $ayuda, $y, $valor, $color) {
 
 $i = if ($hayIconos) { @{
   refrescar = [char]0xE72C; nuevo = [char]0xE8A5; carpeta = [char]0xE8E5
-  abrir     = [char]0xE785; cerrar = [char]0xE72E
-} } else { @{ refrescar=''; nuevo=''; carpeta=''; abrir=''; cerrar='' } }
+  abrir     = [char]0xE785; cerrar = [char]0xE72E; plantilla = [char]0xE8F4
+} } else { @{ refrescar=''; nuevo=''; carpeta=''; abrir=''; cerrar=''; plantilla='' } }
 
 Nueva-Opcion $i.refrescar 'Actualizar el documento de siempre' `
   'Conserva todo lo que haya escrito. Solo cambia las cifras.' `
   ("Lee el Excel y reescribe unicamente las regiones marcadas del documento:`n" +
    "la tabla del estado, los campos de encabezado y las cifras que haya`n" +
    "intercalado en la redaccion.`n`n" +
+   "Si el documento todavia no tiene esas regiones, se las añade solo`n" +
+   "antes de volcar las cifras.`n`n" +
    "Su texto no se toca. Si borro un parrafo, sigue borrado.`n`n" +
    "Cierre el documento en Word antes de ejecutarlo.") 140 '1' $acento
 
-Nueva-Opcion $i.nuevo 'Crear un documento nuevo' `
-  'Una copia desechable, en salidas\. Le dira donde quedo.' `
-  ("Genera un Word desde cero con las cifras del Excel.`n`n" +
-   "Es una foto desechable: sirve para una entrega puntual. Lo que`n" +
-   "escriba en el NO pasa al siguiente que genere.`n`n" +
-   "No toca el documento de siempre. Al terminar le muestra la ruta`n" +
-   "exacta y le ofrece abrir la carpeta.") 218 '2' $tinta
+Nueva-Opcion $i.plantilla 'Crear la plantilla base desde el Excel' `
+  'Un documento vivo, donde usted diga. Se puede actualizar siempre.' `
+  ("Crea un Word NUEVO con las cifras del Excel y, dentro, todas las`n" +
+   "regiones que hacen falta para poder actualizarlo cada cierre.`n`n" +
+   "Le pregunta donde guardarlo: en el disco o en OneDrive, da igual.`n`n" +
+   "Al terminar queda fijado como «el documento de siempre», asi que`n" +
+   "puede escribir en el y volver a la opcion 1 en el proximo cierre.`n`n" +
+   "Es lo que conviene la primera vez. La diferencia con «Crear un`n" +
+   "documento nuevo» es que aquel es una foto y este es la base viva.") 218 '6' $acento
 
 Nueva-Opcion $i.carpeta 'Cambiar el documento que se actualiza' `
-  'Abre el explorador para elegir otro documento de Word.' `
+  'Elija cualquier Word: vacio o ya escrito. Se adapta solo.' `
   ("Elige que archivo actualiza la opcion 1, y lo recuerda.`n`n" +
-   "Comprueba que sea un .docx valido y le avisa si todavia le faltan`n" +
-   "las regiones marcadas.`n`n" +
-   "Queda guardado en config.json.") 296 '3' $tinta
+   "Vale cualquier .docx:`n" +
+   "  - si ya esta integrado, se usa tal cual;`n" +
+   "  - si esta en blanco, se usa de base;`n" +
+   "  - si ya tiene redaccion, se le añade el estado como un apartado`n" +
+   "    aparte y su texto no se toca.`n`n" +
+   "Queda guardado en config.local.json (solo en este equipo).") 296 '3' $tinta
+
+Nueva-Opcion $i.nuevo 'Crear un documento nuevo (copia desechable)' `
+  'Una foto puntual, en salidas\. No se puede actualizar despues.' `
+  ("Genera un Word desde cero con las cifras del Excel.`n`n" +
+   "Es una foto desechable: sirve para una entrega puntual. NO lleva`n" +
+   "regiones dentro, asi que no se puede volver a actualizar, y lo que`n" +
+   "escriba en el no pasa al siguiente que genere.`n`n" +
+   "Si lo que quiere es una base para trabajar, use «Crear la plantilla`n" +
+   "base desde el Excel».") 374 '2' $tinta
 
 # Un solo interruptor, no dos botones. La etiqueta dice que va a PASAR,
 # y la linea «Cifras:» de arriba dice como estan AHORA.
@@ -406,7 +434,7 @@ if ($cifras -like 'EDITABLES*') {
      "y a las cifras intercaladas en la redaccion.`n`n" +
      "OJO: solo protege lo que esta dentro de una region marcada. Un`n" +
      "numero copiado y pegado del Excel como texto normal NO queda`n" +
-     "protegido, porque el programa no puede saber que es una cifra.") 374 '5' $tinta
+     "protegido, porque el programa no puede saber que es una cifra.") 452 '5' $tinta
 } else {
   Nueva-Opcion $i.abrir 'Permitir editar las cifras a mano en Word' `
     'Ojo: lo que teclee lo machaca el siguiente refresco.' `
@@ -415,7 +443,7 @@ if ($cifras -like 'EDITABLES*') {
      "AVISO: siguen vinculadas al Excel. Lo que escriba a mano`n" +
      "desaparece en el siguiente refresco.`n`n" +
      "Para que un valor escrito a mano sobreviva, hay que desvincularlo:`n" +
-     "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 374 '4' $ambar
+     "en Word, clic derecho sobre el recuadro -> Quitar control de contenido.") 452 '4' $ambar
 }
 
 $salir = New-Object System.Windows.Forms.Button
@@ -425,7 +453,7 @@ $salir.ForeColor = $suave
 $salir.BackColor = $fondo
 $salir.FlatStyle = 'Flat'
 $salir.FlatAppearance.BorderSize = 0
-$salir.Location = New-Object System.Drawing.Point((S 540), (S 482))
+$salir.Location = New-Object System.Drawing.Point((S 540), (S 560))
 $salir.Size = New-Object System.Drawing.Size((S 92), (S 34))
 $salir.Cursor = [System.Windows.Forms.Cursors]::Hand
 $salir.Add_Click({ $estado.valor = '0'; $f.Close() })
@@ -558,29 +586,19 @@ $f.Add_Shown({
 
 
 def _lanzar_ps(script_texto, *argumentos, timeout=1800):
-    """Escribe un .ps1 temporal y lo ejecuta. Devuelve (stdout, stderr) o None.
+    """Ejecuta un script de ventana. Devuelve (stdout, stderr) o None.
 
-    El .ps1 se escribe con BOM: Windows PowerShell 5.1 lee un archivo sin BOM
-    como ANSI, y entonces los acentos y las comillas angulares del script
-    llegan como basura.
+    Delega en D.ejecutar_ps, que es quien sabe escribir el .ps1 con BOM y
+    leer la salida en UTF-8 en vez de con la página de códigos de la
+    consola. No se duplica aquí para que el arreglo del juego de
+    caracteres valga en un solo sitio.
     """
-    import subprocess
-    import tempfile
-
-    tmp = Path(tempfile.mkdtemp(prefix="fs_ps_"))
-    script = tmp / "ventana.ps1"
     try:
-        script.write_text(script_texto, encoding="utf-8-sig")
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-STA", "-File", str(script)] + [str(a or "") for a in argumentos],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        return res.stdout or "", res.stderr or ""
+        stdout, stderr, _ = D.ejecutar_ps(script_texto, *argumentos,
+                                          timeout=timeout)
+        return stdout, stderr
     except Exception:
         return None
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def menu_ventana(destino, libro="", cifras=""):
@@ -620,15 +638,20 @@ def _menu(texto_libro=""):
     print()
     print("   1)  ACTUALIZAR el documento de siempre")
     print("       Conserva todo lo que haya escrito. Solo cambia las cifras.")
+    print("       Si le faltan las regiones, se las añade antes de volcarlas.")
     print(f"       Documento: {destino}")
     print(f"       Excel:     {texto_libro or 'NINGUNO — arrástrelo sobre el icono'}")
     print()
-    print("   2)  CREAR un documento nuevo")
-    print("       Sale de la plantilla, en la carpeta salidas\\.")
-    print("       Lo que escriba en él no pasa al siguiente.")
+    print("   6)  CREAR LA PLANTILLA BASE desde el Excel")
+    print("       Un documento vivo, donde usted diga (disco u OneDrive).")
+    print("       Queda fijado como el documento que se actualiza.")
     print()
     print("   3)  CAMBIAR el documento que se actualiza")
-    print("       Abre el explorador para elegir otro documento de Word.")
+    print("       Vale cualquier Word: vacío o ya escrito. Se adapta solo.")
+    print()
+    print("   2)  CREAR un documento nuevo (copia desechable)")
+    print("       Sale de la plantilla, en la carpeta salidas\\.")
+    print("       No lleva regiones: no se puede actualizar después.")
     print()
     cifras = _describir_cifras()
     print("   4)  PERMITIR editar las cifras a mano en Word")
@@ -645,19 +668,43 @@ def _menu(texto_libro=""):
 
     while True:
         try:
-            eleccion = input(" Escriba una opción (0-5) y pulse Enter: ").strip()
+            eleccion = input(" Escriba una opción (0-6) y pulse Enter: ").strip()
         except (EOFError, KeyboardInterrupt):
             return "0"
-        if eleccion in ("0", "1", "2", "3", "4", "5"):
+        if eleccion in ("0", "1", "2", "3", "4", "5", "6"):
             return eleccion
         print(" No entendí esa opción.")
 
 
-def cambiar_documento():
-    """Elige el documento que se actualizará y lo deja fijado en config.json.
+def _contexto_del_libro(libro):
+    """Las cifras del Excel, o None si no hay libro del que sacarlas.
 
-    Abre el explorador de Windows filtrado a documentos de Word, comprueba
-    que sirva, y ofrece prepararlo si todavía no tiene las regiones.
+    Se usa para poder montar el andamiaje YA relleno. Sin libro, el
+    andamiaje se monta igual, solo que con los huecos a la vista.
+    """
+    if libro is None:
+        return None, None
+    cfg = G.cargar_config()
+    ctx = G.leer_contexto(libro, cfg)
+    ctx.pop("_meta", None)
+    ctx.pop("_avisos", None)
+    return ctx, cfg
+
+
+def cambiar_documento(libro=None):
+    """Elige el documento que se actualizará y lo deja listo para trabajar.
+
+    Abre el explorador de Windows, mira cómo viene el documento y actúa en
+    consecuencia. Las tres formas de venir valen:
+
+      ya integrado  -> se fija y no se toca nada más
+      en blanco     -> se usa de base y se le monta el estado encima
+      con redacción -> se le añade el estado como apartado aparte
+
+    Antes solo servía la primera, y las otras dos salían por pantalla como
+    «NO SIRVE COMO DOCUMENTO BASE» o se quedaban a medias: el archivo se
+    fijaba, pero el refresco siguiente no encontraba dónde escribir y
+    terminaba con «no se actualizó NADA».
     """
     cfg = G.cargar_config()
     try:
@@ -677,7 +724,11 @@ def cambiar_documento():
         print(" No se eligió ninguno. Nada ha cambiado.")
         return 0
 
-    ok, avisos, familias = D.revisar_candidato(elegido)
+    ok, avisos, _familias, info = D.revisar_candidato(elegido)
+    # revisar_candidato puede haber encontrado el archivo bajo un nombre
+    # ligeramente distinto (espacios duros, tildes). Se sigue con ESE.
+    elegido = info["ruta"]
+
     print()
     print("=" * ANCHO)
     print(f" {elegido.name}")
@@ -686,30 +737,85 @@ def cambiar_documento():
 
     if not ok:
         print()
-        print(" NO SIRVE COMO DOCUMENTO BASE:")
+        print(" NO SE PUEDE USAR ESTE ARCHIVO:")
         for a in avisos:
             print(f"   {a}")
         print()
         print(" No se ha cambiado nada.")
         return 1
 
-    if familias.get(D.C.FAM_TABLA):
-        print(f"   Ya preparado: tablas={familias.get(D.C.FAM_TABLA, 0)}  "
-              f"campos={familias.get(D.C.FAM_CAMPO, 0)}  "
-              f"cifras={familias.get(D.C.FAM_DATO, 0)}")
     for a in avisos:
-        print(f"   AVISO: {a}")
+        print(f"   {a}")
 
     D.fijar_documento_base(elegido)
-    print()
-    print(" Hecho: a partir de ahora la opción 1 actualiza este documento.")
 
-    if not familias.get(D.C.FAM_TABLA):
+    if info["estado"] != D.LISTO:
+        ctx, cfg_ctx = _contexto_del_libro(libro)
         print()
-        print(" Todavía le faltan las regiones. Para prepararlo, elija la")
-        print(" opción 1 con el Excel y añada --preparar, o ejecute:")
-        print("     EstadosFinancieros.exe MI_LIBRO.xlsx --refrescar --preparar")
+        print(" Preparándolo para que se le puedan volcar las cifras…")
+        if ctx is None:
+            print(" (Sin Excel a mano: se montan las regiones vacías. La")
+            print("  primera actualización las rellena.)")
+        D.preparar(elegido, ctx, cfg_ctx or cfg)
+
+    print()
+    print(" Hecho: a partir de ahora «Actualizar» trabaja sobre este documento.")
     return 0
+
+
+def crear_plantilla(libro):
+    """Crea desde cero el documento base, donde el usuario diga, y lo fija.
+
+    Es lo que faltaba: «Crear un documento nuevo» produce una copia
+    desechable en salidas\\ —renderizada de una plantilla de Word, sin
+    regiones— que no se puede volver a actualizar nunca. Esto produce el
+    documento VIVO, con todas las regiones dentro, y deja que el usuario
+    elija dónde vive: en el disco o en OneDrive, da igual.
+    """
+    if libro is None:
+        raise ValueError(
+            "Para crear la plantilla hacen falta las cifras de un Excel.\n\n"
+            "Arrastre su .xlsx sobre el icono y vuelva a elegir esta opción."
+        )
+
+    print()
+    print(f" Leyendo las cifras de: {libro.name}")
+    ctx, cfg = _contexto_del_libro(libro)
+
+    sugerido = f"Estados financieros - {G.sanear(ctx.get('fecha_actual') or 'base')}.docx"
+    print(" Elija dónde guardarla (local o en OneDrive)…")
+    destino = D.elegir_destino_word(nombre_sugerido=sugerido)
+    if destino is None:
+        print()
+        print(" No se eligió destino. No se ha creado nada.")
+        return 0, None
+
+    print()
+    print(f" Creando: {destino.name}")
+    print(f" En:      {destino.parent}")
+    print()
+    D.crear_base(destino, ctx, cfg)
+
+    # Recién creada ya lleva las cifras dentro (construir las escribe al
+    # montar las regiones), pero se refresca igual: así queda la foto de
+    # metadatos y la bitácora, que es lo que hace comparables los refrescos
+    # siguientes.
+    sha = hashlib.sha256(libro.read_bytes()).hexdigest()[:12]
+    D.refrescar(destino, ctx, origen=f"{libro.name} (sha {sha})", cfg=cfg)
+
+    D.fijar_documento_base(destino)
+    print()
+    print("=" * ANCHO)
+    print(" PLANTILLA CREADA")
+    print("=" * ANCHO)
+    print(f" Archivo:  {destino.name}")
+    print(f" Carpeta:  {destino.parent}")
+    print()
+    print(" Ya está fijada como el documento que se actualiza: escriba en ella")
+    print(" lo que quiera y use «Actualizar» cada cierre. Su redacción no se")
+    print(" pierde; solo cambian las cifras.")
+    print("=" * ANCHO)
+    return 0, destino
 def ejecutar(argv):
     D.preparar_consola()
     args = [a for a in argv[1:] if not a.startswith("--")]
@@ -719,6 +825,8 @@ def ejecutar(argv):
         eleccion = "1"
     elif "--generar" in flags:
         eleccion = "2"
+    elif "--plantilla" in flags or "--crear-base" in flags:
+        eleccion = "6"
     elif "--estado" in flags:
         eleccion = "estado"
     elif "--desbloquear" in flags:
@@ -747,15 +855,20 @@ def ejecutar(argv):
     interactivo = eleccion is None
 
     if eleccion is None:
-        # Arranque guiado: sin documento base, TODAS las opciones salvo la 2
-        # fallan con el mismo error. Antes se dibujaban igualmente cuatro
-        # botones que no podian funcionar; ahora se pide primero el
-        # documento, que es el unico paso que desbloquea el resto.
+        # Arranque guiado: sin documento base, casi todas las opciones fallan
+        # con el mismo error, asi que se resuelve eso primero. Ya no se
+        # fuerza el explorador: con un Excel a mano, crear la plantilla
+        # desde cero es lo que quiere quien empieza, y antes ni siquiera
+        # existia como camino.
         if not _hay_documento():
             print()
             print(" No hay un documento de Word que actualizar todavia.")
-            print(" Eliga uno para empezar (queda guardado en config.json).")
-            cambiar_documento()
+            if libro is not None:
+                print(" Puede crear la plantilla base desde el Excel (opción 6)")
+                print(" o elegir un documento que ya tenga (opción 3).")
+            else:
+                print(" Eliga uno para empezar (queda guardado en config.local.json).")
+                cambiar_documento(libro)
 
         # Primero la ventana; si el equipo no la puede dibujar, la consola.
         eleccion = menu_ventana(_describir_destino(), texto_libro,
@@ -770,11 +883,29 @@ def ejecutar(argv):
     # Cada modulo analiza sus propios argumentos: aqui solo se le quitan
     # las banderas del menu y se le pasa el resto tal cual.
     propias = {"--refrescar", "--generar", "--estado", "--elegir-documento",
-               "--consola",
+               "--consola", "--plantilla", "--crear-base",
                "--desbloquear", "--bloquear"}
     if eleccion == "3":
         propias.add("--documento")
     resto = [argv[0]] + [a for a in argv[1:] if a.lower() not in propias]
+
+    if eleccion == "6":
+        if libro is None:
+            raise ValueError(
+                (aviso_libro + "\n\n") if aviso_libro else
+                "Para crear la plantilla hacen falta las cifras de un Excel.\n\n"
+                "Arrastre su .xlsx sobre el icono, o pase su ruta en la orden."
+            )
+        if aviso_libro:
+            print()
+            print(" AVISO — " + aviso_libro)
+        with _consola_duplicada() as eco:
+            codigo, destino = crear_plantilla(libro)
+        if interactivo:
+            ventana_resultado(
+                "Plantilla creada" if destino else "No se creó nada",
+                eco.getvalue().strip(), destino, ok=True)
+        return codigo
 
     if eleccion in ("1", "2"):
         # Las dos opciones que leen cifras. Antes se entraba a ciegas: si no
@@ -809,7 +940,19 @@ def ejecutar(argv):
         return 0
 
     if eleccion == "3":
-        return cambiar_documento()
+        # Con el libro delante: si el documento elegido no trae las regiones,
+        # se le montan YA rellenas, en vez de dejarlas con los huecos a la
+        # vista hasta la primera actualizacion.
+        with _consola_duplicada() as eco:
+            codigo = cambiar_documento(libro)
+        if interactivo:
+            try:
+                destino = D.resolver_documento(None, G.cargar_config())
+            except Exception:
+                destino = None
+            ventana_resultado("Documento cambiado" if codigo == 0 else "No se cambió",
+                              eco.getvalue().strip(), destino, ok=(codigo == 0))
+        return codigo
 
     if eleccion in ("4", "5"):
         cfg = G.cargar_config()
@@ -854,25 +997,60 @@ def ejecutar(argv):
     return D.estado(G.cargar_config(), args[0] if args else None)
 
 
+#: Banderas que piden una acción concreta sin pasar por el menú.
+_BANDERAS_DIRECTAS = {
+    "--refrescar", "--generar", "--plantilla", "--crear-base", "--estado",
+    "--desbloquear", "--bloquear", "--elegir-documento", "--consola",
+}
+
+
+def _sin_menu(argv):
+    """¿Se pidió una acción concreta por bandera, sin pasar por la ventana?
+
+    Importa para los errores: si la orden viene de un .bat o de una tarea
+    programada, abrir una ventana la dejaría colgada esperando a que
+    alguien pulse «Cerrar».
+    """
+    return any(a.lower() in _BANDERAS_DIRECTAS for a in argv[1:])
+
+
+def _fallo(titulo, cuerpo, argv):
+    """Cuenta lo que ha fallado por los dos sitios: consola y ventana.
+
+    La consola sola no basta: aparece DETRÁS de todo, así que quien pulsó un
+    botón ve cerrarse la ventana y nada más. El error que de verdad importa
+    —el libro abierto en Excel, el documento abierto en Word— acababa en un
+    sitio donde nadie lo lee.
+    """
+    print()
+    print("=" * ANCHO)
+    print(f" {titulo}")
+    print("=" * ANCHO)
+    print(cuerpo)
+    print("=" * ANCHO)
+    if not _sin_menu(argv):
+        ventana_resultado(titulo, cuerpo, None, ok=False)
+
+
 def main():
     try:
         ejecutar(sys.argv)
     except ValueError as e:
-        print()
-        print("=" * ANCHO)
-        print(" NO SE PUDO COMPLETAR")
-        print("=" * ANCHO)
-        print(str(e))
-        print("=" * ANCHO)
+        _fallo("NO SE PUDO COMPLETAR", str(e), sys.argv)
+        R._pausa()
+        sys.exit(1)
+    except PermissionError as e:
+        # Un archivo retenido por Word o Excel. Los caminos previstos ya lo
+        # explican antes de llegar aquí; esto es la red por si alguno se
+        # escapa, para que no salga como un volcado.
+        _fallo("UN ARCHIVO ESTÁ ABIERTO EN OTRO PROGRAMA",
+               f"{e}\n\nCierre el documento en Word y el libro en Excel, y\n"
+               f"vuelva a intentarlo.", sys.argv)
         R._pausa()
         sys.exit(1)
     except Exception:
-        print()
-        print("=" * ANCHO)
-        print(" OCURRIÓ UN ERROR INESPERADO — copie este texto para soporte")
-        print("=" * ANCHO)
-        traceback.print_exc()
-        print("=" * ANCHO)
+        _fallo("OCURRIÓ UN ERROR INESPERADO — copie este texto para soporte",
+               traceback.format_exc(), sys.argv)
         R._pausa()
         sys.exit(1)
     else:

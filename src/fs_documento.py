@@ -25,13 +25,18 @@ borrada, porque el motor nunca la vuelve a inyectar.
     python fs_documento.py simplificar <doc.docx> [--quitar-zonas]
     python fs_documento.py apariencia  <doc.docx> <visible|invisible>
     python fs_documento.py proteger    <doc.docx> --clave X [--salvo-datos]
-    python fs_documento.py plantilla  <destino.docx>
+    python fs_documento.py plantilla  <destino.docx> [--excel libro.xlsx]
     python fs_documento.py proteger   <doc.docx> --clave <clave>
     python fs_documento.py desproteger <doc.docx>
 
 'construir' y 'reparar' son la misma operación: añaden lo que falte para
 que el documento cumpla el contrato, sin duplicar ni borrar lo que ya haya.
-Se pueden correr sobre un documento con meses de redacción encima.
+Se pueden correr sobre un documento con meses de redacción encima. Si el
+documento ya traía redacción, lo que se añade entra detrás de un salto de
+página, como un apartado aparte.
+
+'plantilla' es lo mismo pero partiendo de la nada: crea el .docx y le monta
+el andamiaje dentro. Es lo que hace la opción 6 del menú.
 
 ADVERTENCIA: el refresco escribe sobre el archivo indicado. Si vive en
 OneDrive, ciérrelo en Word antes de refrescar (o Word y el motor pelearán
@@ -284,6 +289,65 @@ def _cuerpo_append(doc, el):
 def _vaciar(el):
     for hijo in list(el):
         el.remove(hijo)
+
+
+# --------------------------------------------------------------------------- #
+#  PowerShell: la salida SIEMPRE en UTF-8
+# --------------------------------------------------------------------------- #
+#: Cabecera que se antepone a todos los scripts de PowerShell.
+#:
+#: Windows PowerShell 5.1 no escribe su salida en Unicode: usa la pagina de
+#: codigos de la consola (cp437 / cp850 en un Windows en español). Cuando esa
+#: salida se redirige a una tuberia, los caracteres que la pagina NO tiene no
+#: dan error: se sustituyen en silencio por el parecido mas cercano.
+#:
+#: Eso convertia una ruta perfectamente valida en una que no existe:
+#:
+#:     ...EDICIÓN<espacio duro>- PAMELA.docx    (el nombre real)
+#:     ...EDICION<byte 0xFF>- PAMELA.docx       (lo que llegaba)
+#:              ^ perdio la tilde   ^ y el espacio duro se rompio
+#:
+#: y por eso un documento con el que se llevaba trabajando semanas se
+#: rechazaba con «No existe» en cuanto se elegia desde el explorador.
+#:
+#: Los argumentos que van HACIA PowerShell viajan por CreateProcessW, que ya
+#: es Unicode: ese sentido nunca ha tenido perdida.
+_PS_UTF8 = (
+    "try { [Console]::OutputEncoding = "
+    "New-Object System.Text.UTF8Encoding $false } catch {}\n"
+)
+
+
+def ejecutar_ps(script_texto, *argumentos, timeout=600, sta=True):
+    """Escribe un .ps1 temporal, lo ejecuta y devuelve (stdout, stderr, codigo).
+
+    La salida se lee como BYTES y se descodifica en UTF-8: ver _PS_UTF8. Con
+    `text=True` Python la descodificaba con la pagina de codigos local
+    (cp1252), que no es la que PowerShell usa para escribir.
+
+    El .ps1 se escribe con BOM porque PowerShell 5.1 lee un archivo sin BOM
+    como ANSI, y entonces los acentos del propio script llegan como basura.
+    """
+    import subprocess
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="fs_ps_"))
+    script = tmp / "orden.ps1"
+    try:
+        script.write_text(_PS_UTF8 + script_texto, encoding="utf-8-sig")
+        orden = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+        if sta:
+            orden.append("-STA")
+        orden += ["-File", str(script)]
+        orden += [str(a if a is not None else "") for a in argumentos]
+        res = subprocess.run(orden, capture_output=True, timeout=timeout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    def _texto(crudo):
+        return (crudo or b"").decode("utf-8", "replace")
+
+    return _texto(res.stdout), _texto(res.stderr), res.returncode
 
 
 # --------------------------------------------------------------------------- #
@@ -730,17 +794,50 @@ def _bloque_campo(nombre, valor=""):
     return sdt
 
 
-def construir(ruta, ctx=None, verbose=True, cfg_bitacora=None):
+def _salto_de_pagina():
+    p = OxmlElement("w:p")
+    r = OxmlElement("w:r")
+    br = OxmlElement("w:br")
+    br.set(qn("w:type"), "page")
+    r.append(br)
+    p.append(r)
+    return p
+
+
+#: Encabezado del apartado que se añade a un documento que YA tenia
+#: redaccion. Sin el, las cifras aparecian pegadas al final del texto de la
+#: persona, sin que nada dijera donde empieza lo que mantiene el programa.
+TITULO_APARTADO = "Estados financieros"
+
+
+def construir(ruta, ctx=None, verbose=True, cfg_bitacora=None, apartado=None):
     """Añade al documento lo que le falte para cumplir el contrato.
 
     Idempotente: correrla dos veces no duplica nada. No borra prosa ni
     reordena lo que ya exista; solo agrega las anclas ausentes al final.
+
+    `apartado`: si el documento ya trae redacción propia, lo que se añade va
+    detrás de un salto de página y un título, para que se lea como una
+    sección aparte y no como una continuación del texto de la persona. None
+    = decidirlo mirando el documento; True/False = forzarlo.
     """
     comprobar_escribible(ruta)
     doc = Document(str(ruta))
     idx = _indexar(doc)
     añadidos = []
     ctx = ctx or {}
+
+    # Qué había ANTES de tocar nada, y dónde acababa. Las dos cosas hacen
+    # falta para poder meter después el encabezado del apartado justo
+    # delante de lo primero que se añada.
+    parrafos_previos, tablas_previas = _contenido_visible(doc)
+    if apartado is None:
+        apartado = parrafos_previos > _UMBRAL_EN_BLANCO or tablas_previas > 0
+    # La lista se GUARDA, no se convierte en un conjunto de id(): mientras
+    # haya una referencia viva, lxml devuelve siempre el mismo objeto para
+    # el mismo nodo y la comparacion por identidad vale. Sin la referencia,
+    # los envoltorios se reciclan y las direcciones se repiten.
+    ya_estaban = list(doc.element.body)
 
     def falta(tag):
         return tag not in idx
@@ -832,6 +929,23 @@ def construir(ruta, ctx=None, verbose=True, cfg_bitacora=None):
         _cuerpo_append(doc, sdt)
         añadidos.append(C.TAG_META)
 
+    # La separación del apartado va DELANTE de lo primero que se haya
+    # añadido: no al final del cuerpo, que ahí ya está la tabla.
+    #
+    # Solo el salto de página: el propio andamiaje empieza por las líneas
+    # centradas de empresa y título, que ya hacen de encabezado. Poner otro
+    # encima lo diría dos veces. Si esas líneas ya existían en el documento
+    # (alguien las movió), entonces sí hace falta un rótulo.
+    if apartado and añadidos:
+        nuevos = [el for el in doc.element.body
+                  if not any(el is viejo for viejo in ya_estaban)]
+        if nuevos:
+            nuevos[0].addprevious(_salto_de_pagina())
+            if C.tag_campo("titulo") not in añadidos:
+                nuevos[0].addprevious(
+                    _parrafo_texto(TITULO_APARTADO, negrita=True,
+                                   alineacion="center", espacio_antes=240))
+
     # Aspecto: sin recuadro en las zonas de redacción ni en los metadatos,
     # para que escribir se parezca a escribir en un documento normal.
     normalizar_apariencia(
@@ -850,6 +964,65 @@ def construir(ruta, ctx=None, verbose=True, cfg_bitacora=None):
         else:
             print("  Nada que añadir: el documento ya cumple el contrato.")
     return añadidos
+
+
+def preparar(ruta, ctx=None, cfg=None, verbose=True, respaldar=True):
+    """Deja un documento cualquiera listo para el refresco, y dice cómo.
+
+    Es `construir` con la copia de seguridad delante y un informe legible
+    detrás. Devuelve (estado_previo, añadidos): el estado dice si el
+    documento ya venía integrado, estaba en blanco o traía redacción propia,
+    que es justo lo que el usuario necesita leer antes de aceptar.
+
+    `respaldar=False` para cuando el llamante ya hizo la copia (el refresco
+    la hace él): un segundo .bak machacaría el bueno con el ya modificado.
+    """
+    estado_, _familias, detalle = clasificar_documento(ruta)
+    if estado_ == LISTO:
+        if verbose:
+            print("  Ya está integrado: no hay que añadirle nada.")
+        return estado_, []
+
+    if respaldar:
+        _respaldar(ruta)
+    if verbose:
+        if estado_ == EN_BLANCO:
+            print("  El documento está en blanco: se usa de base.")
+        else:
+            print(f"  El documento trae {detalle['parrafos']} párrafos y "
+                  f"{detalle['tablas']} tablas escritas.")
+            print("  Se le añade el estado como apartado aparte; su texto no "
+                  "se toca.")
+    añadidos = construir(ruta, ctx, verbose=verbose, cfg_bitacora=cfg,
+                         apartado=(estado_ == CON_TEXTO))
+    return estado_, añadidos
+
+
+def crear_base(destino, ctx=None, cfg=None, verbose=True):
+    """Crea desde cero un .docx con TODAS las regiones, y las cifras dentro.
+
+    Es la contraparte de generador_fs: aquel renderiza una plantilla de
+    Word y produce un documento sin regiones —una foto, imposible de
+    refrescar después—; este produce el documento vivo, el que la opción de
+    actualizar sabe mantener al día.
+
+    `destino` puede estar en el disco local o dentro de OneDrive: es la
+    misma operación.
+    """
+    destino = Path(destino)
+    if destino.exists():
+        comprobar_escribible(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    # Un Word en blanco de verdad: la plantilla por defecto de python-docx
+    # trae los estilos normales de Office y ni un párrafo con texto.
+    doc = Document()
+    guardar_seguro(doc, destino)
+
+    # apartado=False: no hay nada delante de lo que separarse, así que
+    # tampoco hace falta el salto de página.
+    construir(destino, ctx, verbose=verbose, cfg_bitacora=cfg, apartado=False)
+    return destino
 
 
 # --------------------------------------------------------------------------- #
@@ -1786,20 +1959,16 @@ def _aplicar_nombres(xlsx, nuevos, verbose=True):
 
     tmp = Path(tempfile.mkdtemp(prefix="fs_nombrar_"))
     plan_json = tmp / "plan.json"
-    script = tmp / "nombrar.ps1"
     plan_json.write_text(
         json.dumps([{"nombre": p["nombre"], "refiere": p["refiere"]} for p in nuevos],
                    ensure_ascii=False),
         encoding="utf-8",
     )
-    script.write_text(_PS_NOMBRAR, encoding="utf-8")
 
     try:
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-File", str(script), str(plan_json), str(Path(xlsx).resolve())],
-            capture_output=True, text=True, timeout=300,
-        )
+        stdout, stderr, codigo = ejecutar_ps(
+            _PS_NOMBRAR, str(plan_json), str(Path(xlsx).resolve()),
+            timeout=300, sta=False)
     except FileNotFoundError:
         raise ValueError(
             "No encontré PowerShell, que es lo que usa esta orden para pilotar Excel.\n"
@@ -1811,8 +1980,10 @@ def _aplicar_nombres(xlsx, nuevos, verbose=True):
             "Excel tardó demasiado. ¿Está el libro abierto o pidiendo algo en pantalla?\n"
             "Ciérrelo y vuelva a intentarlo."
         )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
-    salida = (res.stdout or "") + (res.stderr or "")
+    salida = stdout + stderr
     creados = 0
     for linea in salida.splitlines():
         linea = linea.strip()
@@ -1821,7 +1992,7 @@ def _aplicar_nombres(xlsx, nuevos, verbose=True):
         elif linea.startswith("!") or linea.startswith("! "):
             if verbose:
                 print(f"    {linea}")
-    if res.returncode != 0 and creados == 0:
+    if codigo != 0 and creados == 0:
         raise ValueError(
             "Excel no pudo escribir los nombres:\n"
             + "\n".join("  " + l for l in salida.strip().splitlines()[:12])
@@ -1925,20 +2096,15 @@ def _aplicar_tipos(xlsx, plan, hoja, col, verbose=True):
 
     tmp = Path(tempfile.mkdtemp(prefix="fs_tipos_"))
     plan_json = tmp / "plan.json"
-    script = tmp / "tipos.ps1"
     plan_json.write_text(
         json.dumps([{"fila": p["fila"], "tipo": p["tipo"]} for p in plan],
                    ensure_ascii=False),
         encoding="utf-8")
-    script.write_text(_PS_TIPOS, encoding="utf-8-sig")
 
     try:
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-File", str(script), str(plan_json), str(Path(xlsx).resolve()),
-             str(hoja), str(col)],
-            capture_output=True, text=True, timeout=300,
-        )
+        stdout, stderr, codigo = ejecutar_ps(
+            _PS_TIPOS, str(plan_json), str(Path(xlsx).resolve()),
+            str(hoja), str(col), timeout=300, sta=False)
     except FileNotFoundError:
         raise ValueError(
             "No encontré PowerShell, que es lo que usa esta orden para pilotar Excel.\n"
@@ -1949,12 +2115,12 @@ def _aplicar_tipos(xlsx, plan, hoja, col, verbose=True):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    salida = (res.stdout or "") + (res.stderr or "")
+    salida = stdout + stderr
     escritos = 0
     for linea in salida.splitlines():
         if linea.strip().startswith("ESCRITOS="):
             escritos = int(linea.split("=", 1)[1])
-    if res.returncode != 0 and escritos == 0:
+    if codigo != 0 and escritos == 0:
         raise ValueError(
             "Excel no pudo escribir la columna 'Tipo':\n"
             + "\n".join("  " + l for l in salida.strip().splitlines()[:12])
@@ -2016,7 +2182,7 @@ def resolver_documento(argumento, cfg):
     # Los nombres escritos en Office suelen colar espacios duros (U+00A0) y
     # acentos descompuestos, invisibles al ojo pero distintos byte a byte.
     # Antes de rendirnos, buscamos un archivo equivalente en la carpeta.
-    cercano = _buscar_parecido(ruta)
+    cercano = _buscar_parecido(ruta) or _buscar_sin_tildes(ruta)
     if cercano is not None:
         print(f"(El nombre de config.json no coincidía exactamente; "
               f"uso '{cercano.name}')")
@@ -2101,6 +2267,44 @@ def _buscar_parecido(ruta):
     return iguales[0] if len(iguales) == 1 else None
 
 
+#: Lo que suele quedar donde habia un espacio duro (U+00A0) que una pagina
+#: de codigos no supo escribir: la 'ÿ' de cp437/cp850, el '?' de una
+#: sustitucion cualquiera, el caracter de reemplazo de Unicode.
+_COMODINES = "ÿ?� "
+
+
+def _sin_tildes(nombre):
+    """El nombre sin diacriticos y sin distinguir tipos de espacio."""
+    import unicodedata
+
+    # Los comodines se cambian ANTES de normalizar: la 'ÿ' se descompone en
+    # 'y' + diéresis, así que después de un NFKD ya no habría forma de
+    # distinguirla de una 'y' de verdad.
+    s = "".join(" " if c in _COMODINES else c for c in str(nombre))
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.split()).casefold()
+
+
+def _buscar_sin_tildes(ruta):
+    """Ultimo recurso: el mismo nombre ignorando tildes y espacios raros.
+
+    Existe porque una ruta que ha pasado por la salida de una consola puede
+    llegar con las tildes comidas ('EDICIÓN' -> 'EDICION') y el espacio duro
+    convertido en otro byte. _buscar_parecido() no lo salva: normaliza la
+    forma de los acentos, pero no los quita. Solo vale si hay UN candidato:
+    ante la duda, mejor decir que no existe que refrescar el documento
+    equivocado.
+    """
+    carpeta = ruta.parent
+    if not carpeta.is_dir():
+        return None
+    objetivo = _sin_tildes(ruta.name)
+    iguales = [p for p in carpeta.glob("*" + ruta.suffix)
+               if _sin_tildes(p.name) == objetivo]
+    return iguales[0] if len(iguales) == 1 else None
+
+
 def _respaldar(ruta):
     """Copia previa, pero NUNCA sobre una copia buena con una mala.
 
@@ -2166,12 +2370,15 @@ Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# $args[0] carpeta inicial   $args[1] archivo donde dejar la respuesta
+$respuesta = if ($args.Count -ge 2) { $args[1] } else { '' }
+
 $d = New-Object System.Windows.Forms.OpenFileDialog
 $d.Title  = 'Elija el documento de Word que se actualizara'
-$d.Filter = 'Documentos de Word (*.docx;*.docm;*.dotx)|*.docx;*.docm;*.dotx|Todos los archivos (*.*)|*.*'
+$d.Filter = 'Documentos de Word (*.docx;*.docm;*.dotx;*.dotm)|*.docx;*.docm;*.dotx;*.dotm|Todos los archivos (*.*)|*.*'
 $d.Multiselect = $false
 $d.CheckFileExists = $true
-if ($args.Count -ge 1 -and $args[0] -and (Test-Path $args[0])) {
+if ($args.Count -ge 1 -and $args[0] -and (Test-Path -LiteralPath $args[0])) {
   $d.InitialDirectory = $args[0]
 }
 
@@ -2198,11 +2405,53 @@ try {
 }
 
 if ($r -eq [System.Windows.Forms.DialogResult]::OK) {
-  Write-Output ("ELEGIDO=" + $d.FileName)
+  # La ruta se devuelve por ARCHIVO, en UTF-8 sin BOM, no por la salida
+  # estandar: ver _PS_UTF8. Un nombre con tildes o con espacios duros
+  # —los que Word y OneDrive meten solos— no sobrevive a la pagina de
+  # codigos de la consola, y el documento acababa rechazado por «No existe».
+  [System.IO.File]::WriteAllText(
+    $respuesta, $d.FileName, (New-Object System.Text.UTF8Encoding $false))
+  Write-Output "ELEGIDO"
 } else {
   Write-Output "CANCELADO"
 }
 """
+
+
+def _dialogo_ruta(script_ps, *argumentos, que="el explorador"):
+    """Corre un dialogo de PowerShell que deja la ruta elegida en un archivo.
+
+    Devuelve la ruta (Path), o None si se cancela o si el dialogo no llega a
+    abrirse. El rodeo por archivo es deliberado: es la unica via que
+    conserva el nombre byte a byte (ver _PS_UTF8).
+    """
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="fs_dialogo_"))
+    respuesta = tmp / "ruta.txt"
+    try:
+        try:
+            salida, error, _ = ejecutar_ps(
+                script_ps, *argumentos, str(respuesta), timeout=600)
+        except Exception as e:
+            print(f"  No se pudo abrir {que} ({type(e).__name__}).")
+            print("  Indique la ruta del documento a mano en config.local.json.")
+            return None
+
+        if respuesta.exists():
+            crudo = respuesta.read_text(encoding="utf-8").strip()
+            if crudo:
+                return Path(crudo)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Ni respuesta ni CANCELADO: el script se rompio. Callarselo deja al
+    # usuario con un boton que aparenta no hacer nada.
+    if "CANCELADO" not in salida:
+        print(f"  {que.capitalize()} no llego a abrirse.")
+        for l in (error or "").strip().splitlines()[:4]:
+            print(f"    {l}")
+    return None
 
 
 def elegir_archivo_word(carpeta_inicial=None):
@@ -2211,76 +2460,220 @@ def elegir_archivo_word(carpeta_inicial=None):
     Devuelve la ruta elegida, o None si se cancela o si no hay entorno
     gráfico (en cuyo caso el llamante debe pedirla por teclado).
     """
-    import subprocess
-    import tempfile
-
-    tmp = Path(tempfile.mkdtemp(prefix="fs_elegir_"))
-    script = tmp / "elegir.ps1"
-    # Con BOM: Windows PowerShell 5.1 lee un .ps1 sin BOM como ANSI, y los
-    # acentos del script llegan convertidos en basura.
-    script.write_text(_PS_ELEGIR, encoding="utf-8-sig")
-    try:
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-STA", "-File", str(script), str(carpeta_inicial or "")],
-            capture_output=True, text=True, timeout=600,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        print(f"  No se pudo abrir el explorador ({type(e).__name__}).")
-        print("  Indique la ruta del documento a mano en config.json.")
-        return None
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    for linea in (res.stdout or "").splitlines():
-        linea = linea.strip()
-        if linea.startswith("ELEGIDO="):
-            return Path(linea[len("ELEGIDO="):]).resolve()
-
-    # Ni ELEGIDO ni CANCELADO: el script se rompio. Callarselo deja al
-    # usuario con un boton que aparenta no hacer nada.
-    if "CANCELADO" not in (res.stdout or ""):
-        detalle = (res.stderr or "").strip().splitlines()
-        print("  El explorador no llego a abrirse.")
-        for l in detalle[:4]:
-            print(f"    {l}")
-    return None
+    return _dialogo_ruta(_PS_ELEGIR, str(carpeta_inicial or ""))
 
 
-def revisar_candidato(ruta):
-    """¿Sirve este archivo como documento base? Devuelve (ok, avisos, regiones)."""
-    import zipfile
+#: «Guardar como» para la plantilla que se crea desde cero. Es el mismo
+#: dialogo de Windows de siempre, asi que el usuario elige indistintamente
+#: una carpeta local o una de OneDrive: para el programa son la misma cosa.
+_PS_GUARDAR = r"""
+$ErrorActionPreference = 'Stop'
 
-    ruta = Path(ruta)
-    avisos = []
-    if not ruta.exists():
-        return False, [f"No existe: {ruta}"], {}
-    if ruta.suffix.lower() not in (".docx", ".docm", ".dotx"):
-        avisos.append(f"La extensión '{ruta.suffix}' no es la de un documento de "
-                      f"Word moderno. Puede fallar.")
-    if not zipfile.is_zipfile(ruta):
-        return False, avisos + [
-            "No es un .docx válido (un .doc antiguo no sirve: ábralo en Word y",
-            "guárdelo como .docx)."], {}
-    try:
-        doc = Document(str(ruta))
-    except Exception as e:
-        return False, avisos + [f"Word no lo puede abrir: {type(e).__name__}: {e}"], {}
+$codigo = @"
+using System;
+using System.Runtime.InteropServices;
+public static class PppGuardar {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern int SetProcessDpiAwarenessContext(IntPtr v);
+}
+"@
+try { Add-Type -TypeDefinition $codigo -ErrorAction Stop } catch {}
+try   { [void][PppGuardar]::SetProcessDpiAwarenessContext([IntPtr](-4)) }
+catch { try { [void][PppGuardar]::SetProcessDPIAware() } catch {} }
 
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+Add-Type -AssemblyName System.Drawing | Out-Null
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+# $args[0] carpeta inicial   $args[1] nombre sugerido   $args[2] respuesta
+$respuesta = if ($args.Count -ge 3) { $args[2] } else { '' }
+
+$d = New-Object System.Windows.Forms.SaveFileDialog
+$d.Title  = 'Donde quiere guardar la plantilla'
+$d.Filter = 'Documento de Word (*.docx)|*.docx'
+$d.DefaultExt = 'docx'
+$d.AddExtension = $true
+# Sin esto Windows pregunta «¿desea reemplazarlo?» y luego el programa
+# preguntaria otra vez. La confirmacion la da el dialogo, una sola vez.
+$d.OverwritePrompt = $true
+if ($args.Count -ge 1 -and $args[0] -and (Test-Path -LiteralPath $args[0])) {
+  $d.InitialDirectory = $args[0]
+}
+if ($args.Count -ge 2 -and $args[1]) { $d.FileName = $args[1] }
+
+$duena = New-Object System.Windows.Forms.Form
+$duena.StartPosition   = 'CenterScreen'
+$duena.Size            = New-Object System.Drawing.Size(1, 1)
+$duena.FormBorderStyle = 'None'
+$duena.ShowInTaskbar   = $false
+$duena.Opacity         = 0
+$duena.TopMost         = $true
+$duena.Show()
+$duena.Activate()
+[System.Windows.Forms.Application]::DoEvents()
+
+try {
+  $r = $d.ShowDialog($duena)
+} finally {
+  $duena.Close()
+  $duena.Dispose()
+}
+
+if ($r -eq [System.Windows.Forms.DialogResult]::OK) {
+  [System.IO.File]::WriteAllText(
+    $respuesta, $d.FileName, (New-Object System.Text.UTF8Encoding $false))
+  Write-Output "ELEGIDO"
+} else {
+  Write-Output "CANCELADO"
+}
+"""
+
+
+def elegir_destino_word(carpeta_inicial=None, nombre_sugerido="Estados financieros.docx"):
+    """«Guardar como» para el documento base que se va a crear.
+
+    Devuelve la ruta elegida (aún inexistente) o None si se cancela. El
+    usuario decide ahí si lo pone en el disco local o dentro de OneDrive;
+    el programa trata las dos igual.
+    """
+    if carpeta_inicial is None:
+        import generador_fs as G
+
+        carpeta_inicial = G.raiz_onedrive() or Path.home()
+    ruta = _dialogo_ruta(_PS_GUARDAR, str(carpeta_inicial or ""),
+                         str(nombre_sugerido), que="la ventana de guardado")
+    if ruta is not None and ruta.suffix.lower() != ".docx":
+        ruta = ruta.with_suffix(".docx")
+    return ruta
+
+
+#: Las tres formas en que puede llegar un documento que el usuario elige.
+#: Ninguna es un rechazo: las tres se saben trabajar.
+LISTO = "listo"          # ya trae las regiones: se refresca y punto
+EN_BLANCO = "en_blanco"  # vacio o casi: se usa tal cual como base
+CON_TEXTO = "con_texto"  # tiene redaccion pero no regiones: se le añade un apartado
+
+#: Cuantos parrafos con texto puede tener un documento y seguir contando
+#: como «practicamente en blanco». Un Word recien creado trae uno o dos
+#: parrafos vacios; uno que alguien empezo suele traer un titulo y poco mas.
+_UMBRAL_EN_BLANCO = 3
+
+
+def _contenido_visible(doc):
+    """(parrafos con texto, tablas) FUERA de las regiones del contrato.
+
+    Sirve para distinguir un documento en blanco de uno con redaccion. Lo
+    que ya vive dentro de una region no cuenta: eso lo puso el programa.
+
+    La pertenencia se mira subiendo por los padres, no comparando id(). En
+    lxml el objeto de Python es un envoltorio que se crea al vuelo y se
+    descarta en cuanto nadie lo referencia: dos nodos distintos pueden
+    acabar en la misma direccion de memoria, y un conjunto de id() da falsos
+    positivos. Con eso, un documento lleno de redaccion se contaba como
+    vacio.
+    """
+    cuerpo = doc.element.body
+    parrafos = 0
+    for p in cuerpo.iter(qn("w:p")):
+        if _dentro_de_region(p):
+            continue
+        if "".join(t.text or "" for t in p.iter(qn("w:t"))).strip():
+            parrafos += 1
+    tablas = sum(1 for t in cuerpo.iter(qn("w:tbl")) if not _dentro_de_region(t))
+    return parrafos, tablas
+
+
+def clasificar_documento(ruta):
+    """¿Como hay que tratar este documento? Devuelve (estado, familias, detalle).
+
+    `estado` es LISTO, EN_BLANCO o CON_TEXTO. Ninguno impide trabajar: es
+    solo la diferencia entre refrescar, usar de base o añadir un apartado.
+    """
+    doc = Document(str(ruta))
     familias = {}
     for tag in _indexar(doc):
         fam, _, _ = C.descomponer(tag)
         familias[fam] = familias.get(fam, 0) + 1
 
-    if not familias.get(C.FAM_TABLA):
-        avisos.append("Todavía no tiene las regiones del contrato: habrá que")
-        avisos.append("prepararlo una vez antes del primer refresco.")
+    parrafos, tablas = _contenido_visible(doc)
+    detalle = {"parrafos": parrafos, "tablas": tablas}
+
+    if familias.get(C.FAM_TABLA):
+        return LISTO, familias, detalle
+    if parrafos <= _UMBRAL_EN_BLANCO and tablas == 0:
+        return EN_BLANCO, familias, detalle
+    return CON_TEXTO, familias, detalle
+
+
+def revisar_candidato(ruta):
+    """¿Sirve este archivo como documento base?
+
+    Devuelve (ok, avisos, familias, info). `info` lleva 'ruta' —la real, que
+    puede no ser la que se pidio— y 'estado' (LISTO / EN_BLANCO / CON_TEXTO).
+
+    Solo se rechaza lo que de verdad no se puede abrir. Que le falten las
+    regiones NO es motivo de rechazo: se le añaden. Antes esto era mas
+    estricto de lo que hacia falta y dejaba fuera documentos utilizables.
+    """
+    import zipfile
+
+    ruta = Path(ruta)
+    avisos = []
+    info = {"ruta": ruta, "estado": None}
+
+    if not ruta.exists():
+        # Un nombre escrito en Office trae espacios duros (U+00A0) y acentos
+        # descompuestos que no se ven; y una ruta que ha pasado por una
+        # consola puede haber perdido las tildes. Antes de rendirse, se
+        # busca el archivo equivalente en la misma carpeta: es la diferencia
+        # entre «no existe» y encontrarlo donde siempre estuvo.
+        cercano = _buscar_parecido(ruta) or _buscar_sin_tildes(ruta)
+        if cercano is None:
+            return False, [f"No existe: {ruta}"], {}, info
+        avisos.append(f"El nombre no coincidía exactamente; uso «{cercano.name}».")
+        ruta = cercano
+        info["ruta"] = ruta
+
+    if ruta.suffix.lower() == ".doc":
+        return False, avisos + [
+            "Es un .doc del Word antiguo. Ábralo en Word y use «Guardar como»",
+            "para dejarlo en .docx; ese sí sirve."], {}, info
+    if ruta.suffix.lower() not in (".docx", ".docm", ".dotx", ".dotm"):
+        avisos.append(f"La extensión '{ruta.suffix}' no es la de un documento de "
+                      f"Word moderno. Puede fallar.")
+    if not zipfile.is_zipfile(ruta):
+        return False, avisos + [
+            "No es un .docx válido. Si es un .doc antiguo, ábralo en Word y",
+            "guárdelo como .docx; si no, puede que se quedara a medio escribir."], {}, info
+
+    try:
+        estado_, familias, detalle = clasificar_documento(ruta)
+    except Exception as e:
+        return False, avisos + [
+            f"Word no lo puede abrir: {type(e).__name__}: {e}"], {}, info
+    info["estado"] = estado_
+    info.update(detalle)
+
+    if estado_ == LISTO:
+        avisos.append(
+            f"Ya está integrado: tablas={familias.get(C.FAM_TABLA, 0)}  "
+            f"campos={familias.get(C.FAM_CAMPO, 0)}  "
+            f"cifras={familias.get(C.FAM_DATO, 0)}. Se refresca tal cual.")
+    elif estado_ == EN_BLANCO:
+        avisos.append("Está en blanco: se usará como base y se le montará "
+                      "encima el estado completo.")
+    else:
+        avisos.append(
+            f"Tiene redacción propia ({detalle['parrafos']} párrafos, "
+            f"{detalle['tablas']} tablas) pero no las regiones del contrato.")
+        avisos.append("Se le añadirá un apartado al final con las cifras; lo "
+                      "que ya hay escrito no se toca.")
 
     culpables = quien_bloquea(ruta)
     if culpables:
         avisos.append("Está abierto ahora mismo: " + culpables[0])
 
-    return True, avisos, familias
+    return True, avisos, familias, info
 
 
 def fijar_documento_base(ruta_doc, verbose=True):
@@ -2641,15 +3034,13 @@ def main(argv):
             print("Falta el destino: plantilla <destino.docx>")
             return 1
         destino = Path(args[0]).resolve()
-        destino.parent.mkdir(parents=True, exist_ok=True)
-        Document().save(str(destino))
         _titulo(f"PLANTILLA BASE — {destino.name}")
-        ctx = None
+        ctx, _cfg = None, None
         try:
             ctx, _, _cfg = _cargar_ctx(opcion("--excel"))
         except Exception:
             pass
-        construir(destino, ctx or {})
+        crear_base(destino, ctx or {}, _cfg)
         print(f" Escrita en: {destino}")
         print("=" * 68)
         return 0

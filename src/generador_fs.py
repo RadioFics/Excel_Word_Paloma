@@ -914,9 +914,100 @@ def leer_rangos_con_nombre(wb, hoja_titulo, cfg):
             break
     return por_fila, escalares
 # --------------------------------------------------------------------------- #
+#  El libro tiene que dejarse leer
+# --------------------------------------------------------------------------- #
+#: Marcas de OneDrive «Archivos a Petición»: el archivo figura en la carpeta
+#: pero su contenido todavía está en la nube. Leerlo dispara la descarga, y
+#: si OneDrive no puede hacerla (sin red, sincronización en pausa) la
+#: lectura falla sin que nada indique que el archivo está incompleto.
+_SOLO_EN_LA_NUBE = 0x00400000 | 0x00040000      # RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN
+
+
+def _esta_en_la_nube(ruta):
+    try:
+        return bool(os.stat(ruta).st_file_attributes & _SOLO_EN_LA_NUBE)
+    except (OSError, AttributeError):
+        return False
+
+
+def comprobar_legible(ruta):
+    """Aborta con una explicación si el libro no se deja ni abrir para leer.
+
+    El libro NUNCA se escribe: solo se lee. Pero Excel lo retiene en
+    exclusiva mientras lo tiene abierto —dentro de OneDrive y con el
+    autoguardado puesto, casi siempre— y entonces ni siquiera se puede
+    abrir en modo lectura.
+
+    Sin esta comprobación, ese caso salía como un volcado de PermissionError
+    en mitad de openpyxl: veinte líneas de traza que no le dicen a nadie que
+    lo único que hay que hacer es cerrar Excel. Es la misma cortesía que ya
+    se le hacía al documento de Word (fs_documento.comprobar_escribible).
+    """
+    ruta = Path(ruta)
+    if not ruta.exists():
+        raise ValueError(f"No se encontró el libro de Excel:\n  {ruta}")
+
+    try:
+        with open(ruta, "rb"):
+            return
+    except PermissionError:
+        pass
+    except OSError as e:
+        raise ValueError(
+            f"No se puede leer el libro de Excel:\n  {ruta}\n  {e}")
+
+    if _esta_en_la_nube(ruta):
+        raise ValueError(
+            f"El libro de Excel todavía está en la nube, no en este equipo:\n"
+            f"  archivo:  {ruta.name}\n"
+            f"  carpeta:  {ruta.parent}\n\n"
+            "OneDrive lo muestra en la carpeta, pero su contenido no se ha\n"
+            "descargado y ahora no se puede traer.\n\n"
+            "Ábralo una vez en Excel, o haga clic derecho sobre él ->\n"
+            "«Conservar siempre en este dispositivo», y vuelva a intentarlo."
+        )
+
+    # Quién lo retiene. Es la misma maquinaria (Restart Manager) que usa
+    # Windows para el cartel «este archivo está siendo utilizado por…».
+    culpables = []
+    try:
+        import fs_documento as D
+
+        culpables = D.quien_bloquea(ruta)
+    except Exception:
+        pass
+
+    if culpables:
+        detalle = "\n\nQuién lo tiene:\n" + "\n".join(f"  - {c}" for c in culpables)
+        if not any("en este equipo" in c for c in culpables):
+            detalle += (
+                "\n\nNinguna aplicación de ESTE equipo lo retiene: es probable\n"
+                "que lo tenga abierto otra persona a través de OneDrive."
+            )
+    else:
+        detalle = (
+            "\n\nNo pude identificar qué lo retiene. Suele ser Excel en este\n"
+            "equipo, o una sincronización de OneDrive en curso."
+        )
+
+    raise ValueError(
+        f"El libro de Excel está abierto y bloqueado:\n"
+        f"  archivo:  {ruta.name}\n"
+        f"  carpeta:  {ruta.parent}"
+        f"{detalle}\n\n"
+        "Ciérrelo en Excel y vuelva a ejecutar.\n\n"
+        "El libro solo se LEE, nunca se escribe, así que no hay nada que\n"
+        "perder: es Excel quien no deja ni leerlo mientras lo tiene abierto."
+    )
+
+
+# --------------------------------------------------------------------------- #
 #  Orquestador de lectura
 # --------------------------------------------------------------------------- #
 def leer_contexto(ruta_xlsx, cfg):
+    # Único punto por el que pasan todos los caminos que leen cifras: aquí
+    # se comprueba una vez y valen para todos.
+    comprobar_legible(ruta_xlsx)
     wb = load_workbook(ruta_xlsx, data_only=True, read_only=True)
     try:
         # El nombre de config.json es una PISTA que se comprueba, no una
